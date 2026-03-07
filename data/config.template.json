@@ -1,0 +1,42 @@
+{
+  "vault_path": "",
+  "dashboard_filename": "TaskNemo.md",
+  "overlap_days": 2,
+  "max_followup_queries": 5,
+  "followup_age_threshold_days": 3,
+  "conversation_query_template": "Show me all my Teams conversations since {since_date}",
+  "completion_query_template": "Which of my Teams conversations since {since_date} have been resolved or completed, where someone said thanks or confirmed something was finished?",
+  "auto_close_likely_done_days": 3,
+  "auto_close_stale_days": 14,
+  "urgency_keywords": [
+    "urgent", "asap", "eod", "eow", "today", "tomorrow",
+    "blocker", "blocking", "critical", "immediately",
+    "p0", "p1", "deadline", "overdue", "time-sensitive", "high priority"
+  ],
+  "completion_keywords": [
+    "thanks", "done", "shipped", "approved", "completed",
+    "merged", "resolved", "closed", "fixed", "lgtm", "looks good"
+  ],
+  "waiting_keywords": [
+    "waiting", "pending", "blocked on", "need input",
+    "awaiting", "depends on", "hold", "on hold"
+  ],
+  "stakeholders": {},
+  "sources_enabled": ["teams", "email", "calendar"],
+  "query_mode": "raw",
+  "email_query_template": "Show me ALL my emails since {since_date}. For each, include: sender, subject, body preview, date, whether I replied, and the Outlook link.",
+  "email_completion_query_template": "Which of my action-required emails since {since_date} have been resolved? Look for emails where I already replied, the request was completed, or someone else handled it. Include the sender, subject, and evidence of resolution.",
+  "calendar_query_template": "Show me ALL my calendar events since {since_date}. Include: title, date/time, attendees, any meeting notes, and the link.",
+  "transcript_discovery_query_template": "Show me ALL my meetings since {since_date} that have a recording or transcript available. For each meeting, include the title, date, attendees, and the recording/transcript link.",
+  "transcript_extraction_query_template": "For each of my meetings since {since_date} that has a transcript, read the transcript and extract ALL action items and commitments. For each one include: (1) what the action item is, (2) who committed to it — me or someone else, (3) any deadline mentioned, (4) the meeting title and link. Be exhaustive — include every commitment, even small ones.",
+  "sent_items_query_template": "Check my sent emails and outgoing Teams messages since {since_date}. What actions have I already completed? Look for emails I sent, documents I shared, replies I gave, and messages where I delivered on a commitment. For each, include what I did, who I sent it to, when, and the link.",
+  "outbound_query_template": "Show me ALL my sent messages and emails since {since_date} where the recipient has NOT replied. Include: recipient, what I said, when, and the link.",
+  "inbound_dms_query_template": "Show me all direct messages and emails sent to me since {since_date} where I have NOT replied yet. Exclude group chats, channel messages, automated notifications, and bot messages. For each, include the sender, what they said, when they sent it, and the link.",
+  "scoring": {
+    "calendar_boost": 5
+  },
+  "last_run": null,
+  "next_task_id": 1,
+  "alerts_filename": "Task Alerts.md",
+  "full_sync_threshold_hours": 8
+}

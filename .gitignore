@@ -1,0 +1,12 @@
+data/config.json
+data/tasks.json
+data/run_log.json
+data/analytics.json
+data/sync_log_*.txt
+.mcp.json
+_sync_run.py
+__pycache__/
+*.pyc
+.pytest_cache/
+.vscode/
+.idea/

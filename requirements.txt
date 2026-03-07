@@ -1,0 +1,2 @@
+# Optional — dashboard works without this (graceful fallback)
+win11toast; sys_platform == "win32"

@@ -132,6 +132,19 @@ Each item extracted from a WorkIQ response should be a dict with these keys:
    Extract tasks ONLY from explicit asks in the raw comment text. Both signals
    feed into `process_source_items()` as source `"doc_mentions"`.
 
+8. **Unknown sender lookup.** When processing a task from someone NOT in
+   `config["stakeholders"]`, query WorkIQ: *"Who is [Person Name]? What is
+   their role, title, and reporting relationship to me?"* Based on the
+   response, add them to stakeholders with an appropriate role and weight:
+   - VP / skip-level → `"skip"`, weight 9
+   - Direct manager → `"manager"`, weight 7–8
+   - Cross-team partner / PM → `"partner"`, weight 5
+   - Peer / IC → `"peer"`, weight 3
+   - External / unknown → `"external"`, weight 1
+   Save the updated config so future syncs score them correctly.
+   This ensures new contacts are prioritized properly from their very first
+   message — no manual config needed.
+
 6. **State machine.** Tasks flow through:
    `open → waiting → needs_followup → likely_done → closed`
    - `closed` is terminal (no reopening)

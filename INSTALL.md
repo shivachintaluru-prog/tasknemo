@@ -7,7 +7,7 @@ Step-by-step guide to set up the TaskNemo on a new machine, including Claude Cod
 ## Quick Install
 
 ```powershell
-git clone <repo-url>
+git clone https://github.com/shivachintaluru-prog/tasknemo.git
 cd tasknemo
 .\install.ps1
 ```
@@ -33,7 +33,7 @@ For manual setup, follow the steps below.
 ## Step 1 -- Clone and Initialize
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/shivachintaluru-prog/tasknemo.git
 cd tasknemo
 python task_dashboard.py init --vault-path "C:\Users\<you>\Documents\TaskVault"
 ```
@@ -172,7 +172,7 @@ claude
 
 Then tell Claude:
 
-> Run a full task dashboard sync following the pipeline in SKILL.md.
+> Run a full TaskNemo sync following the pipeline in SKILL.md.
 
 Claude will:
 1. Call `sync_prepare()` to load config and build queries
@@ -233,6 +233,7 @@ Creates a Windows Task Scheduler job running every 2 hours from 9 AM to 7 PM on 
 | `unpin TASK-ID` | Remove pin from a task |
 | `check` | Quick status check (no external calls) |
 | `migrate` | Backfill new fields to existing tasks |
+| `upgrade` | Merge new config keys from template + migrate task schema |
 | `refresh` | Close checked tasks, run state machine, re-render |
 | `watch` | Auto-refresh on dashboard file changes (Ctrl+C to stop) |
 | `add "title"` | Add a task manually (`--sender`, `--due`, `--desc`, `--direction`) |
@@ -303,6 +304,26 @@ Three methods:
 | `data/run_log.json` | Yes | Audit trail per sync run |
 | `data/analytics.json` | Yes | Response time and escalation analytics |
 | `data/sync_log_*.txt` | Yes | Headless sync output logs |
+
+---
+
+## Keeping Up to Date
+
+When the repo gets updates (new features, bug fixes, config changes):
+
+```powershell
+.\update.ps1
+```
+
+This pulls the latest code, installs any new dependencies, merges new config keys into your local config (without overwriting your stakeholders or settings), migrates the task schema, and verifies everything works.
+
+You can also update manually:
+
+```bash
+git pull
+pip install -r requirements.txt
+python task_dashboard.py upgrade
+```
 
 ---
 

@@ -5,7 +5,7 @@ Automated pipeline: extract tasks from Teams, email, calendar, and transcripts (
 ## Quick Start
 
 ```bash
-git clone <repo-url> && cd tasknemo
+git clone https://github.com/shivachintaluru-prog/tasknemo.git && cd tasknemo
 python task_dashboard.py init
 python task_dashboard.py check
 ```

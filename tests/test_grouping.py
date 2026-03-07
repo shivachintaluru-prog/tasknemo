@@ -56,7 +56,7 @@ class TestBuildSearchFallback:
         assert "Search" in result
 
     def test_fallback_strips_stop_words(self):
-        task = {"title": "Reply to the status update for Rahul", "sender": "Rahul Bhuptani"}
+        task = {"title": "Reply to the status update for Alex", "sender": "Alex Morgan"}
         result = build_search_fallback(task)
         # "to", "the", "for" are stop words and should be excluded
         assert "Reply" in result or "status" in result or "update" in result

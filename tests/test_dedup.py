@@ -32,7 +32,7 @@ class TestNormalization:
         assert "to" not in result.split()
 
     def test_normalize_title_sorts_words(self):
-        result = normalize_title_words("Send update to Rahul")
+        result = normalize_title_words("Send update to Alex")
         words = result.split()
         assert words == sorted(words)
 
@@ -69,9 +69,9 @@ class TestDedupHash:
         assert h1 != h2
 
     def test_stop_word_order_invariant(self):
-        # "Send update to Rahul" and "Update send to Rahul" normalize the same
-        h1 = compute_dedup_hash("Me", "Send update to Rahul", "2026-03-01")
-        h2 = compute_dedup_hash("Me", "Update send to Rahul", "2026-03-01")
+        # "Send update to Alex" and "Update send to Alex" normalize the same
+        h1 = compute_dedup_hash("Me", "Send update to Alex", "2026-03-01")
+        h2 = compute_dedup_hash("Me", "Update send to Alex", "2026-03-01")
         assert h1 == h2
 
 
@@ -109,16 +109,16 @@ class TestJaccardSimilarity:
 class TestFuzzyMatch:
     def test_match_found(self):
         existing = [
-            {"title": "Reply to Rahul about status update", "id": "TASK-001"},
+            {"title": "Reply to Alex about status update", "id": "TASK-001"},
             {"title": "Share tracker with team", "id": "TASK-002"},
         ]
-        match = fuzzy_match("Reply to Rahul: status update", existing, threshold=0.5)
+        match = fuzzy_match("Reply to Alex: status update", existing, threshold=0.5)
         assert match is not None
         assert match["id"] == "TASK-001"
 
     def test_no_match(self):
         existing = [
-            {"title": "Reply to Rahul about status update", "id": "TASK-001"},
+            {"title": "Reply to Alex about status update", "id": "TASK-001"},
         ]
         match = fuzzy_match("Completely different task about budgets", existing)
         assert match is None

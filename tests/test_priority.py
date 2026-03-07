@@ -24,9 +24,9 @@ def _make_config():
     """Return a minimal config for testing."""
     return {
         "stakeholders": {
-            "rahul bhuptani": {"name": "Rahul Bhuptani", "weight": 8},
-            "bharath tumu": {"name": "Bharath Tumu", "weight": 9},
-            "subasini annamalai": {"name": "Subasini Annamalai", "weight": 3},
+            "alex morgan": {"name": "Alex Morgan", "weight": 8},
+            "pat rivera": {"name": "Pat Rivera", "weight": 9},
+            "jamie lee": {"name": "Jamie Lee", "weight": 3},
         },
         "urgency_keywords": [
             "urgent", "asap", "eod", "today", "blocker", "critical", "p0",
@@ -34,7 +34,7 @@ def _make_config():
     }
 
 
-def _make_task(sender="Rahul Bhuptani", title="Reply to status update",
+def _make_task(sender="Alex Morgan", title="Reply to status update",
                description="", due_hint="", created_days_ago=0, times_seen=1,
                state="open"):
     """Create a task dict for testing."""
@@ -58,19 +58,19 @@ def _make_task(sender="Rahul Bhuptani", title="Reply to status update",
 class TestScoreTask:
     def test_manager_high_stakeholder_score(self):
         config = _make_config()
-        task = _make_task(sender="Rahul Bhuptani", created_days_ago=0)
+        task = _make_task(sender="Alex Morgan", created_days_ago=0)
         score_task(task, config)
         assert task["score_breakdown"]["stakeholder"] == 32  # 8 * 4
 
     def test_skip_manager_higher_score(self):
         config = _make_config()
-        task = _make_task(sender="Bharath Tumu", created_days_ago=0)
+        task = _make_task(sender="Pat Rivera", created_days_ago=0)
         score_task(task, config)
         assert task["score_breakdown"]["stakeholder"] == 36  # 9 * 4
 
     def test_peer_low_stakeholder_score(self):
         config = _make_config()
-        task = _make_task(sender="Subasini Annamalai", created_days_ago=0)
+        task = _make_task(sender="Jamie Lee", created_days_ago=0)
         score_task(task, config)
         assert task["score_breakdown"]["stakeholder"] == 12  # 3 * 4
 
@@ -150,7 +150,7 @@ class TestScoreTask:
         config = _make_config()
         # Max everything: skip manager, urgent+blocker+critical, old, many mentions
         task = _make_task(
-            sender="Bharath Tumu",
+            sender="Pat Rivera",
             title="urgent blocker critical p0",
             created_days_ago=20,
             times_seen=10,
@@ -160,7 +160,7 @@ class TestScoreTask:
 
     def test_score_components_sum_correctly(self):
         config = _make_config()
-        task = _make_task(sender="Rahul Bhuptani", created_days_ago=5, times_seen=2)
+        task = _make_task(sender="Alex Morgan", created_days_ago=5, times_seen=2)
         score_task(task, config)
         bd = task["score_breakdown"]
         expected = (bd["stakeholder"] + bd["urgency"] + bd["age"] + bd["thread"]
@@ -240,7 +240,7 @@ class TestScoreTask:
     def test_updated_sum_with_all_components(self):
         config = _make_config()
         config["scoring"] = {"calendar_boost": 5}
-        task = _make_task(sender="Rahul Bhuptani", created_days_ago=5, times_seen=2)
+        task = _make_task(sender="Alex Morgan", created_days_ago=5, times_seen=2)
         task["source"] = "calendar"
         task["source_metadata"] = {
             "alternate_links": [
@@ -353,11 +353,11 @@ class TestEvaluateTransitions:
         task = _make_task(created_days_ago=2, state="open")
         task["thread_id"] = "19:abc@thread.v2"
         conv_signals = [{
-            "sender": "Rahul Bhuptani",
+            "sender": "Alex Morgan",
             "topic": "status update",
             "thread_id": "19:abc@thread.v2",
             "signal_type": "completion",
-            "signal": "Rahul said 'thanks, looks good'",
+            "signal": "Alex said 'thanks, looks good'",
         }]
         today = datetime.now().isoformat()
         transitions = evaluate_transitions(
@@ -374,7 +374,7 @@ class TestEvaluateTransitions:
             "state": "needs_followup", "reason": "stale", "date": task["created"],
         })
         conv_signals = [{
-            "sender": "Rahul Bhuptani",
+            "sender": "Alex Morgan",
             "topic": "status update",
             "thread_id": "19:abc@thread.v2",
             "signal_type": "active",
@@ -393,7 +393,7 @@ class TestEvaluateTransitions:
         task["teams_link"] = "https://teams.microsoft.com/l/message/19:abc@thread.v2/123"
         full_url = "https://teams.microsoft.com/l/message/19:abc@thread.v2/456?context=%7B%22chatOrChannel%22%3A%7B%22id%22%3A%2219%3Aabc%40thread.v2%22%7D%7D"
         conv_signals = [{
-            "sender": "Rahul Bhuptani",
+            "sender": "Alex Morgan",
             "topic": "status update",
             "thread_id": "19:abc@thread.v2",
             "signal_type": "active",
@@ -412,7 +412,7 @@ class TestEvaluateTransitions:
         direct_signals = {"TASK-PREC": {"signal_type": "completion", "signal": "direct: done"}}
         # Conversation signal says active (should be ignored for this task)
         conv_signals = [{
-            "sender": "Rahul Bhuptani",
+            "sender": "Alex Morgan",
             "topic": "status update",
             "thread_id": "19:abc@thread.v2",
             "signal_type": "active",

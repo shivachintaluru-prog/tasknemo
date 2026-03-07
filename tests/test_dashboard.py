@@ -48,22 +48,22 @@ class TestRenderTaskItem:
     def test_open_task_has_unchecked_box(self):
         task = {
             "id": "TASK-001",
-            "title": "Reply to Rahul",
+            "title": "Reply to Alex",
             "score": 82,
             "description": "Status update needed",
             "next_step": "Send summary",
-            "sender": "Rahul Bhuptani",
+            "sender": "Alex Morgan",
             "created": datetime.now().isoformat(),
             "teams_link": "https://teams.microsoft.com/l/message/123",
             "state": "open",
         }
         result = _render_task_item(task)
         assert "- [ ]" in result
-        assert "**TASK-001 | Reply to Rahul**" in result
+        assert "**TASK-001 | Reply to Alex**" in result
         assert "`Score: 82`" in result
         assert "\U0001f4ac Status update needed" in result
         assert "Next: Send summary" in result
-        assert "\U0001f464 Rahul Bhuptani" in result
+        assert "\U0001f464 Alex Morgan" in result
         assert "[Open in Teams]" in result
 
     def test_closed_task_has_checked_box(self):
@@ -118,7 +118,7 @@ class TestRenderTaskItem:
         task = {
             "title": "Review budget proposal",
             "score": 42,
-            "sender": "Rahul Bhuptani",
+            "sender": "Alex Morgan",
             "created": datetime.now().isoformat(),
             "state": "open",
             "source": "email",
@@ -135,7 +135,7 @@ class TestRenderTaskItem:
         task = {
             "title": "Prepare demo script",
             "score": 46,
-            "sender": "Bharath Tumu",
+            "sender": "Pat Rivera",
             "created": datetime.now().isoformat(),
             "state": "open",
             "source": "calendar",
@@ -149,9 +149,9 @@ class TestRenderTaskItem:
 
     def test_legacy_task_without_source_renders_teams_link(self):
         task = {
-            "title": "Reply to Rahul",
+            "title": "Reply to Alex",
             "score": 82,
-            "sender": "Rahul Bhuptani",
+            "sender": "Alex Morgan",
             "created": datetime.now().isoformat(),
             "teams_link": "https://teams.microsoft.com/l/message/123",
             "state": "open",
@@ -161,9 +161,9 @@ class TestRenderTaskItem:
 
     def test_alternate_links_rendered(self):
         task = {
-            "title": "CMM ID mapping",
+            "title": "API schema mapping",
             "score": 30,
-            "sender": "Rajan Singh",
+            "sender": "Jordan Kim",
             "created": datetime.now().isoformat(),
             "state": "open",
             "source": "teams",
@@ -241,9 +241,9 @@ class TestRenderDashboard:
     def test_outbound_task_in_waiting_on_others_section(self):
         outbound_task = {
             "id": "TASK-OUT-1",
-            "title": "Waiting for Arjun to call back",
+            "title": "Waiting for Casey to call back",
             "score": 10,
-            "sender": "Arjun Patel",
+            "sender": "Casey Ng",
             "created": datetime.now().isoformat(),
             "state": "open",
             "direction": "outbound",
@@ -258,23 +258,23 @@ class TestRenderDashboard:
         # The task should appear after the Waiting on Others heading
         woo_idx = md.index("[!info] Waiting on Others")
         open_idx = md.index("[!todo] Open")
-        assert "Waiting for Arjun to call back" in md[woo_idx:]
+        assert "Waiting for Casey to call back" in md[woo_idx:]
         # Should NOT appear in Open section
-        assert "Waiting for Arjun to call back" not in md[open_idx:woo_idx]
+        assert "Waiting for Casey to call back" not in md[open_idx:woo_idx]
 
     def test_focus_section_has_high_score_tasks(self):
         tasks = _load_fixture_tasks()
         config = _make_config()
         md = render_dashboard(tasks, config)
         # TASK-001 has score 82 and is open → should be in Focus Now
-        assert "Reply to Rahul: status update on voice roadmap" in md
+        assert "Reply to Alex: status update on product roadmap" in md
 
     def test_waiting_section_has_waiting_tasks(self):
         tasks = _load_fixture_tasks()
         config = _make_config()
         md = render_dashboard(tasks, config)
         # TASK-003 is in waiting state
-        assert "Review Voice Notes COGS analysis from Ananya" in md
+        assert "Review COGS analysis from Taylor" in md
 
 
 class TestWriteDashboard:

@@ -31,13 +31,13 @@ def _fresh_analytics():
 def _make_config():
     return {
         "stakeholders": {
-            "rahul bhuptani": {"name": "Rahul Bhuptani", "weight": 8},
+            "alex morgan": {"name": "Alex Morgan", "weight": 8},
         },
         "urgency_keywords": ["urgent", "asap"],
     }
 
 
-def _make_task(task_id="TASK-TEST", sender="Rahul Bhuptani", title="Test task",
+def _make_task(task_id="TASK-TEST", sender="Alex Morgan", title="Test task",
                created_days_ago=0, times_seen=1, state="open"):
     created = (datetime.now() - timedelta(days=created_days_ago)).isoformat()
     return {
@@ -179,7 +179,7 @@ class TestScoreTaskWithAnalytics:
     def test_with_analytics_adds_components(self):
         config = _make_config()
         a = _fresh_analytics()
-        a["response_times"]["rahul bhuptani"] = {"avg": 30.0, "count": 5}
+        a["response_times"]["alex morgan"] = {"avg": 30.0, "count": 5}
         task = _make_task()
         score_task(task, config, a)
         assert task["score_breakdown"]["response_time"] == 10
@@ -207,9 +207,9 @@ class TestScoreTaskWithAnalytics:
 
     def test_cap_at_100(self):
         config = _make_config()
-        config["stakeholders"]["rahul bhuptani"]["weight"] = 10
+        config["stakeholders"]["alex morgan"]["weight"] = 10
         a = _fresh_analytics()
-        a["response_times"]["rahul bhuptani"] = {"avg": 50.0, "count": 10}
+        a["response_times"]["alex morgan"] = {"avg": 50.0, "count": 10}
         pin_task("TASK-TEST", a)
         a["escalation_history"] = {
             "TASK-TEST": [

@@ -21,8 +21,8 @@ from task_dashboard import (
 )
 
 
-def _make_task(task_id="TASK-TEST", sender="Rajan Singh",
-               title="Follow up on CMM ID mapping", state="open",
+def _make_task(task_id="TASK-TEST", sender="Jordan Kim",
+               title="Follow up on API schema mapping", state="open",
                source="teams", source_link="", source_metadata=None):
     created = datetime.now().isoformat()
     return {
@@ -118,48 +118,48 @@ class TestBuildAllQueries:
 class TestFindCrossSourceMatch:
     def test_email_matches_teams_task(self):
         existing = [
-            _make_task(task_id="T-001", sender="Rajan Singh",
-                       title="Follow up on CMM ID mapping", source="teams"),
+            _make_task(task_id="T-001", sender="Jordan Kim",
+                       title="Follow up on API schema mapping", source="teams"),
         ]
-        new_task = {"sender": "Rajan Singh", "title": "CMM ID mapping follow-up"}
+        new_task = {"sender": "Jordan Kim", "title": "API schema mapping follow-up"}
         match = find_cross_source_match(new_task, existing, threshold=0.5)
         assert match is not None
         assert match["id"] == "T-001"
 
     def test_calendar_matches_teams_task(self):
         existing = [
-            _make_task(task_id="T-001", sender="Bharath Tumu",
+            _make_task(task_id="T-001", sender="Pat Rivera",
                        title="Send demo readiness update", source="teams"),
         ]
-        new_task = {"sender": "Bharath Tumu", "title": "Demo readiness update"}
+        new_task = {"sender": "Pat Rivera", "title": "Demo readiness update"}
         match = find_cross_source_match(new_task, existing, threshold=0.5)
         assert match is not None
         assert match["id"] == "T-001"
 
     def test_no_match_different_sender(self):
         existing = [
-            _make_task(task_id="T-001", sender="Rajan Singh",
-                       title="CMM ID mapping"),
+            _make_task(task_id="T-001", sender="Jordan Kim",
+                       title="API schema mapping"),
         ]
-        new_task = {"sender": "Bharath Tumu", "title": "CMM ID mapping"}
+        new_task = {"sender": "Pat Rivera", "title": "API schema mapping"}
         match = find_cross_source_match(new_task, existing, threshold=0.5)
         assert match is None
 
     def test_no_match_different_title(self):
         existing = [
-            _make_task(task_id="T-001", sender="Rajan Singh",
-                       title="CMM ID mapping"),
+            _make_task(task_id="T-001", sender="Jordan Kim",
+                       title="API schema mapping"),
         ]
-        new_task = {"sender": "Rajan Singh", "title": "Quarterly budget review"}
+        new_task = {"sender": "Jordan Kim", "title": "Quarterly budget review"}
         match = find_cross_source_match(new_task, existing, threshold=0.5)
         assert match is None
 
     def test_closed_tasks_excluded(self):
         existing = [
-            _make_task(task_id="T-001", sender="Rajan Singh",
-                       title="CMM ID mapping", state="closed"),
+            _make_task(task_id="T-001", sender="Jordan Kim",
+                       title="API schema mapping", state="closed"),
         ]
-        new_task = {"sender": "Rajan Singh", "title": "CMM ID mapping follow-up"}
+        new_task = {"sender": "Jordan Kim", "title": "API schema mapping follow-up"}
         match = find_cross_source_match(new_task, existing, threshold=0.5)
         assert match is None
 
@@ -170,7 +170,7 @@ class TestFindCrossSourceMatch:
 
     def test_empty_title_returns_none(self):
         existing = [_make_task()]
-        new_task = {"sender": "Rajan Singh", "title": ""}
+        new_task = {"sender": "Jordan Kim", "title": ""}
         assert find_cross_source_match(new_task, existing) is None
 
 
@@ -399,10 +399,10 @@ class TestMergeDuplicates:
         }
 
     def test_same_thread_similar_title_merged(self):
-        t1 = self._make_dup_task("TASK-001", "Follow up on CMM ID mapping",
+        t1 = self._make_dup_task("TASK-001", "Follow up on API schema mapping",
                                  thread_id="19:abc",
                                  created="2026-03-01T10:00:00")
-        t2 = self._make_dup_task("TASK-002", "Follow up CMM ID mapping status",
+        t2 = self._make_dup_task("TASK-002", "Follow up API schema mapping status",
                                  thread_id="19:abc",
                                  created="2026-03-02T10:00:00")
         tasks = [t1, t2]
@@ -413,9 +413,9 @@ class TestMergeDuplicates:
         assert "TASK-001" in merged_ids
 
     def test_different_thread_not_merged(self):
-        t1 = self._make_dup_task("TASK-001", "Follow up on CMM ID mapping",
+        t1 = self._make_dup_task("TASK-001", "Follow up on API schema mapping",
                                  thread_id="19:abc")
-        t2 = self._make_dup_task("TASK-002", "Follow up on CMM ID mapping",
+        t2 = self._make_dup_task("TASK-002", "Follow up on API schema mapping",
                                  thread_id="19:def")
         tasks = [t1, t2]
         result = merge_duplicates(tasks)
@@ -447,7 +447,7 @@ class TestMergeDuplicates:
     def test_dissimilar_titles_not_merged(self):
         t1 = self._make_dup_task("TASK-001", "Review budget proposal",
                                  thread_id="19:abc")
-        t2 = self._make_dup_task("TASK-002", "Schedule meeting with Arjun",
+        t2 = self._make_dup_task("TASK-002", "Schedule meeting with Casey",
                                  thread_id="19:abc")
         tasks = [t1, t2]
         result = merge_duplicates(tasks)

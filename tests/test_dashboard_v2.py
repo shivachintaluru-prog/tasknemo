@@ -183,7 +183,7 @@ class TestComputeConfidence:
 
 class TestClassifyTaskType:
     def test_reply_align(self):
-        task = _make_task(title="Reply to Rahul with status")
+        task = _make_task(title="Reply to Alex with status")
         assert classify_task_type(task) == "reply_align"
 
     def test_draft_create(self):
@@ -199,7 +199,7 @@ class TestClassifyTaskType:
         assert classify_task_type(task) == "review_decide"
 
     def test_followup_nudge(self):
-        task = _make_task(title="Follow up with Rajan on status")
+        task = _make_task(title="Follow up with Jordan on status")
         assert classify_task_type(task) == "followup_nudge"
 
     def test_default_fallback(self):
@@ -221,14 +221,14 @@ class TestGenerateNextAction:
         assert len(words) <= 12
 
     def test_infers_by_type_reply(self):
-        task = _make_task(title="Reply to Rahul", next_step="")
+        task = _make_task(title="Reply to Alex", next_step="")
         result = _generate_next_action(task)
         assert "Reply" in result
 
     def test_infers_by_type_followup(self):
-        task = _make_task(title="Follow up with Rajan", next_step="", sender="Rajan Singh")
+        task = _make_task(title="Follow up with Jordan", next_step="", sender="Jordan Kim")
         result = _generate_next_action(task)
-        assert "Ping" in result or "Rajan" in result
+        assert "Ping" in result or "Jordan" in result
 
     def test_fills_missing_with_default(self):
         task = _make_task(title="Something vague", next_step="", description="")
@@ -288,9 +288,9 @@ class TestRenderTaskItemV2:
         assert "Idle:" in result
 
     def test_owner_line(self):
-        task = _make_task(sender="Rahul Bhuptani")
+        task = _make_task(sender="Alex Morgan")
         result = _render_task_item_v2(task)
-        assert "Owner: Rahul Bhuptani" in result
+        assert "Owner: Alex Morgan" in result
 
     def test_next_line(self):
         task = _make_task(next_step="Send summary")
@@ -310,9 +310,9 @@ class TestRenderTaskItemV2:
         assert "closed" in result
 
     def test_outbound_shows_owes(self):
-        task = _make_task(direction="outbound", sender="Arjun Patel")
+        task = _make_task(direction="outbound", sender="Casey Ng")
         result = _render_task_item_v2(task)
-        assert "Owes: Arjun Patel" in result
+        assert "Owes: Casey Ng" in result
 
 
 # ---------------------------------------------------------------------------
@@ -501,10 +501,10 @@ class TestExtractContainerKey:
         assert src_type == "chat"
 
     def test_sender_fallback_has_meaningful_context(self):
-        task = _make_task(sender="Rahul B", title="Update the quarterly report slides",
+        task = _make_task(sender="Alex M", title="Update the quarterly report slides",
                           thread_id="", source_metadata={})
         key, title, src_type, _ = _extract_container_key(task)
         assert "sender:" in key
-        assert "Rahul B" in title
+        assert "Alex M" in title
         assert "Update the quarterly report" in title
         assert src_type == "direct"

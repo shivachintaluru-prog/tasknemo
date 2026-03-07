@@ -28,8 +28,8 @@ def _load_fixture_tasks():
         return json.load(f)
 
 
-def _make_task(task_id="TASK-TEST", sender="Rajan Singh",
-               title="Follow up on CMM ID mapping", state="open",
+def _make_task(task_id="TASK-TEST", sender="Jordan Kim",
+               title="Follow up on API schema mapping", state="open",
                source="teams", thread_id=""):
     created = datetime.now().isoformat()
     return {
@@ -183,11 +183,11 @@ class TestProcessSourceItems:
         assert ctx["run_stats"]["skipped"] == 1
 
     def test_finds_cross_source_match_and_merges(self):
-        existing = _make_task(task_id="TASK-001", sender="Rajan Singh",
-                              title="Follow up on CMM ID mapping")
+        existing = _make_task(task_id="TASK-001", sender="Jordan Kim",
+                              title="Follow up on API schema mapping")
         ctx = _make_sync_context(open_tasks=[existing])
         items = [
-            {"sender": "Rajan Singh", "title": "CMM ID mapping follow-up",
+            {"sender": "Jordan Kim", "title": "API schema mapping follow-up",
              "link": "https://outlook.office.com/mail/123", "source": "email",
              "direction": "inbound", "signal_type": None, "already_done": False, "extra": {}},
         ]

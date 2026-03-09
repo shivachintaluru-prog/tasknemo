@@ -334,9 +334,11 @@ class TestEvaluateTransitions:
         assert len(transitions) == 1
         assert transitions[0][2] == "closed"
 
-    def test_needs_followup_auto_closes_after_14_days(self):
-        task = _make_task(created_days_ago=15, state="open")
+    def test_needs_followup_auto_closes_after_7_days(self):
+        task = _make_task(created_days_ago=10, state="open")
         task["state"] = "needs_followup"
+        nf_date = (datetime.now() - timedelta(days=8)).isoformat()
+        task["state_history"].append({"state": "needs_followup", "reason": "stale", "date": nf_date})
         today = datetime.now().isoformat()
         transitions = evaluate_transitions([task], {}, today)
         assert len(transitions) == 1

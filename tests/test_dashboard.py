@@ -218,8 +218,8 @@ class TestRenderDashboard:
         assert "[!warning] Focus Now" in md
         assert "[!todo] Open" in md
         assert "[!example] Waiting" in md
-        assert "[!question] Needs Follow-up" in md
-        assert "[!info] Waiting on Others" in md
+        assert "[!question] Stale" in md
+        assert "[!info] Following Up" in md
         assert "[!success] Recently Closed" in md
 
     def test_last_updated_present(self):
@@ -253,10 +253,10 @@ class TestRenderDashboard:
         }
         config = _make_config()
         md = render_dashboard([outbound_task], config)
-        # Should be in Waiting on Others, NOT in Open
-        assert "[!info] Waiting on Others" in md
-        # The task should appear after the Waiting on Others heading
-        woo_idx = md.index("[!info] Waiting on Others")
+        # Should be in Following Up, NOT in Open
+        assert "[!info] Following Up" in md
+        # The task should appear after the Following Up heading
+        woo_idx = md.index("[!info] Following Up")
         open_idx = md.index("[!todo] Open")
         assert "Waiting for Casey to call back" in md[woo_idx:]
         # Should NOT appear in Open section

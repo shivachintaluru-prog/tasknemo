@@ -290,7 +290,7 @@ class TestRenderTaskItemV2:
     def test_owner_line(self):
         task = _make_task(sender="Alex Morgan")
         result = _render_task_item_v2(task)
-        assert "Owner: Alex Morgan" in result
+        assert "Asked by: Alex Morgan" in result
 
     def test_next_line(self):
         task = _make_task(next_step="Send summary")
@@ -309,10 +309,10 @@ class TestRenderTaskItemV2:
         assert "~~" in result
         assert "closed" in result
 
-    def test_outbound_shows_owes(self):
+    def test_outbound_shows_assigned_to(self):
         task = _make_task(direction="outbound", sender="Casey Ng")
         result = _render_task_item_v2(task)
-        assert "Owes: Casey Ng" in result
+        assert "Assigned to: Casey Ng" in result
 
 
 # ---------------------------------------------------------------------------
@@ -325,13 +325,17 @@ class TestRenderDashboardV2:
         tasks = _load_fixture_tasks()
         config = _make_config()
         md = render_dashboard_v2(tasks, config)
-        focus_idx = md.index("Focus Now")
-        due48_idx = md.index("Due in 48 hours")
-        nudge_idx = md.index("Nudge Due")
+        my_tasks_idx = md.index("## My Actions")
+        focus_idx = md.index("\U0001f525 Focus Now")
+        due_soon_idx = md.index("Due Soon")
         open_idx = md.index("[!todo]")
-        waiting_idx = md.index("Waiting (fresh)")
+        followup_idx = md.index("Stale \u2014")
+        waiting_others_idx = md.index("## Following Up")
+        nudge_idx = md.index("Nudge Needed")
+        waiting_idx = md.index("\u23f3 Waiting for Reply")
         closed_idx = md.index("Recently Closed")
-        assert focus_idx < due48_idx < nudge_idx < open_idx < waiting_idx < closed_idx
+        assert my_tasks_idx < focus_idx < due_soon_idx < open_idx < followup_idx
+        assert followup_idx < waiting_others_idx < nudge_idx < waiting_idx < closed_idx
 
     def test_summary_line_format(self):
         tasks = _load_fixture_tasks()
@@ -339,21 +343,22 @@ class TestRenderDashboardV2:
         md = render_dashboard_v2(tasks, config)
         assert "Last synced:" in md
         assert "Focus:" in md
-        assert "Due soon (48h):" in md
+        assert "Due soon:" in md
+        assert "Nudge:" in md
         assert "Stale (idle" in md
 
     def test_focus_minimum_3(self):
         """When 1-2 inbound tasks exist, focus should pad to 3 from other states."""
         tasks = [
-            _make_task(id="TASK-001", score=80, state="open"),
-            _make_task(id="TASK-002", score=20, state="open"),
-            _make_task(id="TASK-003", score=10, state="waiting"),
+            _make_task(id="TASK-001", title="Review budget proposal", score=80, state="open"),
+            _make_task(id="TASK-002", title="Update API documentation", score=20, state="open"),
+            _make_task(id="TASK-003", title="Schedule team standup", score=10, state="waiting"),
         ]
         config = _make_config()
         md = render_dashboard_v2(tasks, config)
         # Focus should contain at least items — check for task IDs in focus section
         focus_section_start = md.index("Focus Now")
-        due_section_start = md.index("Due in 48 hours")
+        due_section_start = md.index("Due Soon")
         focus_section = md[focus_section_start:due_section_start]
         assert "TASK-001" in focus_section
         assert "TASK-002" in focus_section
@@ -362,44 +367,46 @@ class TestRenderDashboardV2:
     def test_focus_max_5(self):
         """Focus should never exceed 5 items."""
         tasks = [
-            _make_task(id=f"TASK-{i:03d}", score=90-i, state="open")
+            _make_task(id=f"TASK-{i:03d}", title=f"Unique task number {i} for testing", score=90-i, state="open")
             for i in range(8)
         ]
         config = _make_config()
         md = render_dashboard_v2(tasks, config)
         focus_start = md.index("Focus Now")
-        due_start = md.index("Due in 48 hours")
+        due_start = md.index("Due Soon")
         focus_section = md[focus_start:due_start]
         # Count task IDs in focus section
         count = sum(1 for i in range(8) if f"TASK-{i:03d}" in focus_section)
         assert count == 5
 
-    def test_due_48h_section(self):
+    def test_due_soon_section(self):
         tasks = [
             _make_task(id="TASK-DUE", score=30, state="open", due_hint="eod today"),
         ]
         config = _make_config()
         md = render_dashboard_v2(tasks, config)
-        assert "Due in 48 hours" in md
+        assert "Due Soon" in md
 
     def test_nudge_due_vs_waiting_split(self):
         """Outbound idle >= 3 goes to Nudge Due, fresh outbound goes to Waiting."""
         stale_outbound = _make_task(
             id="TASK-STALE",
+            title="Follow up on budget approval",
             direction="outbound",
             state="open",
             updated=(datetime.now() - timedelta(days=5)).isoformat(),
         )
         fresh_outbound = _make_task(
             id="TASK-FRESH",
+            title="Check deployment status",
             direction="outbound",
             state="open",
             updated=datetime.now().isoformat(),
         )
         config = _make_config()
         md = render_dashboard_v2([stale_outbound, fresh_outbound], config)
-        nudge_idx = md.index("Nudge Due")
-        waiting_idx = md.index("Waiting (fresh)")
+        nudge_idx = md.index("Nudge Needed")
+        waiting_idx = md.index("\u23f3 Waiting for Reply")
         nudge_section = md[nudge_idx:waiting_idx]
         waiting_section = md[waiting_idx:]
         assert "TASK-STALE" in nudge_section
@@ -428,6 +435,7 @@ class TestRenderDashboardV2:
         assert "*Nothing due soon.*" in md
         assert "*No nudges needed.*" in md
         assert "*No other open tasks.*" in md
+        assert "*Nothing stale" in md
 
     def test_outbound_routing(self):
         """Outbound tasks should NOT appear in Focus or Open sections."""
@@ -435,9 +443,48 @@ class TestRenderDashboardV2:
         config = _make_config()
         md = render_dashboard_v2([outbound], config)
         focus_start = md.index("Focus Now")
-        due_start = md.index("Due in 48 hours")
+        due_start = md.index("Due Soon")
         focus_section = md[focus_start:due_start]
         assert "TASK-OUT" not in focus_section
+
+    def test_no_duplicate_across_sections(self):
+        """An outbound task due<48h should appear in Nudge only, not Due Soon."""
+        outbound_due = _make_task(
+            id="TASK-OD",
+            direction="outbound",
+            state="open",
+            due_hint="eod today",
+        )
+        config = _make_config()
+        md = render_dashboard_v2([outbound_due], config)
+        # Should be in Nudge Due
+        nudge_idx = md.index("Nudge Needed")
+        assert "TASK-OD" in md[nudge_idx:]
+        # Should NOT be in Due Soon (inbound only)
+        due_soon_idx = md.index("Due Soon")
+        open_idx = md.index("[!todo]")
+        due_soon_section = md[due_soon_idx:open_idx]
+        assert "TASK-OD" not in due_soon_section
+
+    def test_needs_followup_section(self):
+        """Inbound needs_followup task not in focus lands in Needs Follow-up."""
+        # Fill focus with 5 higher-priority tasks
+        focus_tasks = [
+            _make_task(id=f"TASK-F{i}", title=f"High priority item {i} for focus", state="open", score=90-i)
+            for i in range(5)
+        ]
+        followup_task = _make_task(
+            id="TASK-NFU",
+            title="Check status of deployment review",
+            state="needs_followup",
+            score=5,
+        )
+        config = _make_config()
+        md = render_dashboard_v2(focus_tasks + [followup_task], config)
+        followup_idx = md.index("Stale \u2014")
+        waiting_idx = md.index("## Following Up")
+        followup_section = md[followup_idx:waiting_idx]
+        assert "TASK-NFU" in followup_section
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +506,7 @@ class TestVersionToggle:
         # v2 uses "Last synced: {timestamp}" format with new metrics
         assert "Last synced:" in md
         assert "Focus:" in md
-        assert "Due soon (48h):" in md
+        assert "Due soon:" in md
 
     def test_default_is_v2(self):
         config = _make_config()

@@ -213,14 +213,14 @@ def calculate_since_date(last_run, overlap_days):
     """Return a human-readable date string for 'since' queries.
 
     If last_run is None (first run), defaults to 7 days ago.
-    Otherwise, goes back to last_run minus overlap_days.
+    Otherwise, goes back to last_run minus 1 day for a tight query window.
     """
     today = datetime.now()
     if last_run is None:
         since = today - timedelta(days=7)
     else:
         last = datetime.fromisoformat(last_run)
-        since = last - timedelta(days=overlap_days)
+        since = last - timedelta(days=1)
     return since.strftime("%B %d, %Y")
 
 
@@ -587,10 +587,13 @@ def merge_duplicates(tasks):
     for t in non_closed:
         thread = t.get("thread_id", "")
         meeting = t.get("source_metadata", {}).get("meeting_title", "")
+        sender = normalize_text(t.get("sender", ""))
         if thread:
             groups[f"thread:{thread}"].append(t)
         if meeting:
             groups[f"meeting:{meeting}"].append(t)
+        if sender:
+            groups[f"sender:{sender}"].append(t)
 
     merged_results = []
     already_merged = set()
@@ -912,7 +915,7 @@ def match_conversation_to_tasks(conversation, tasks, threshold=0.5):
 
 
 def evaluate_transitions(tasks, followup_signals=None, today=None,
-                         conversation_signals=None):
+                         conversation_signals=None, config=None):
     """Evaluate state transitions for a list of tasks.
 
     Supports two signal formats:
@@ -934,6 +937,7 @@ def evaluate_transitions(tasks, followup_signals=None, today=None,
     today_dt = datetime.fromisoformat(today) if today else datetime.now()
     today_str = today or today_dt.isoformat()
     followup_signals = followup_signals or {}
+    config = config or {}
     transitions = []
     task_map = {t["id"]: t for t in tasks}
 
@@ -996,10 +1000,25 @@ def evaluate_transitions(tasks, followup_signals=None, today=None,
             transitions.append((task_id, old_state, "open", "Activity detected in conversation"))
             continue
 
-        # Needs Follow-up → Closed: 14+ days with no re-mention (fallback safety net)
-        if task["state"] == "needs_followup" and age_days >= 14 and not signal.get("has_update"):
-            transition_task(task, "closed", "Auto-closed: stale after 14 days with no re-mention", today_str)
-            transitions.append((task_id, old_state, "closed", "Stale auto-close"))
+        # Needs Follow-up → Closed: 7+ days in needs_followup with no re-mention
+        if task["state"] == "needs_followup" and not signal.get("has_update"):
+            nf_entry = None
+            for sh in reversed(task.get("state_history", [])):
+                if sh.get("state") == "needs_followup":
+                    nf_entry = sh
+                    break
+            days_in_nf = (today_dt - datetime.fromisoformat(nf_entry["date"])).days if nf_entry else age_days
+            auto_close_stale = config.get("auto_close_stale_days", 7)
+            if days_in_nf >= auto_close_stale:
+                transition_task(task, "closed", f"Auto-closed: in needs_followup for {days_in_nf}d", today_str)
+                transitions.append((task_id, old_state, "closed", "Stale auto-close"))
+                continue
+
+        # Open → Closed: 10+ days with zero signals
+        auto_close_open = config.get("auto_close_open_days", 10)
+        if task["state"] == "open" and age_days >= auto_close_open and not signal.get("has_update"):
+            transition_task(task, "closed", f"Auto-closed: open {age_days}d with no signals", today_str)
+            transitions.append((task_id, old_state, "closed", f"Stale open auto-close after {age_days}d"))
             continue
 
         # Open → Needs Follow-up: age > 3 days, no recent mention
@@ -1503,9 +1522,9 @@ def _render_task_item_v2(task, indent=0, all_tasks=None, section=None, analytics
     lines.append(f"{prefix}  Due: {due_hint or '\u2014'} \u00b7 Age: {age} \u00b7 Idle: {idle_days}d")
 
     if direction == "outbound":
-        lines.append(f"{prefix}  Owner: {sender} \u2192 Owes: {sender}")
+        lines.append(f"{prefix}  Assigned to: {sender}")
     else:
-        lines.append(f"{prefix}  Owner: {sender}")
+        lines.append(f"{prefix}  Asked by: {sender}")
 
     lines.append(f"{prefix}  Next: {next_action}")
 
@@ -1651,9 +1670,9 @@ def render_dashboard_v1(tasks, config, run_stats=None, analytics=None):
                     "No other open tasks.", "open")
     _render_section("example", "Waiting", waiting,
                     "Nothing waiting on others.", "waiting")
-    _render_section("question", "Needs Follow-up", needs_followup,
-                    "No follow-ups needed.", "needs_followup")
-    _render_section("info", "Waiting on Others", outbound_sorted,
+    _render_section("question", "Stale \u2014 Close or Chase", needs_followup,
+                    "Nothing stale \u2014 you're on top of it.", "needs_followup")
+    _render_section("info", "Following Up", outbound_sorted,
                     "No pending requests to others.", "outbound")
     _render_section("success", "Recently Closed", recently_closed,
                     "No recently closed tasks.", "closed")
@@ -1712,29 +1731,35 @@ def render_dashboard_v2(tasks, config, run_stats=None, analytics=None):
         focus = []
     focus_ids = {t["id"] for t in focus}
 
-    # Section 2: Due in 48h — all non-closed where due within 48h, excluding focus
-    due_48h = [t for t in active if _is_due_within(t, 48) and t["id"] not in focus_ids]
-    due_48h.sort(key=lambda t: parse_due_hint(t.get("due_hint", "")) or datetime.max)
-    due_48h_ids = {t["id"] for t in due_48h}
+    # Section 2: Due Soon — inbound due<48h, excluding focus
+    due_soon = [
+        t for t in inbound_active
+        if _is_due_within(t, 48) and t["id"] not in focus_ids
+    ]
+    due_soon.sort(key=lambda t: parse_due_hint(t.get("due_hint", "")) or datetime.max)
+    due_soon_ids = {t["id"] for t in due_soon}
 
-    # Section 3: Nudge Due — outbound where idle >= 3 OR due within 48h
+    # Section 3: Open (Grouped) — inbound, open, not in focus or due_soon
+    open_grouped = [
+        t for t in inbound_active
+        if t.get("state") == "open" and t["id"] not in focus_ids and t["id"] not in due_soon_ids
+    ]
+
+    # Section 4: Needs Follow-up — inbound waiting/needs_followup, not placed above
+    placed_inbound = focus_ids | due_soon_ids | {t["id"] for t in open_grouped}
+    needs_followup = [
+        t for t in inbound_active
+        if t.get("state") in ("waiting", "needs_followup") and t["id"] not in placed_inbound
+    ]
+
+    # Section 5: Nudge Due — outbound idle>=3 or due<48h
     nudge_due = [t for t in outbound_active if _compute_idle_days(t) >= 3 or _is_due_within(t, 48)]
     nudge_due_ids = {t["id"] for t in nudge_due}
 
-    # Section 4: Open (Grouped) — inbound, open, not in focus or due48h
-    open_grouped = [
-        t for t in inbound_active
-        if t.get("state") == "open" and t["id"] not in focus_ids and t["id"] not in due_48h_ids
-    ]
+    # Section 6: Waiting — outbound not in nudge
+    waiting_outbound = [t for t in outbound_active if t["id"] not in nudge_due_ids]
 
-    # Section 5: Waiting (fresh) — outbound not in nudge + inbound waiting/needs_followup not in focus
-    waiting_fresh = (
-        [t for t in outbound_active if t["id"] not in nudge_due_ids]
-        + [t for t in inbound_active
-           if t.get("state") in ("waiting", "needs_followup") and t["id"] not in focus_ids]
-    )
-
-    # Section 6: Recently Closed
+    # Section 7: Recently Closed
     seven_days_ago = (now - timedelta(days=7)).isoformat()
     recently_closed = [
         t for t in tasks
@@ -1743,7 +1768,6 @@ def render_dashboard_v2(tasks, config, run_stats=None, analytics=None):
 
     # Summary counts
     focus_count = len(focus)
-    due_soon_count = len([t for t in active if _is_due_within(t, 48)])
     stale_count = len([t for t in active if _compute_idle_days(t) >= 3])
     last_run = config.get("last_run")
     if last_run:
@@ -1759,7 +1783,7 @@ def render_dashboard_v2(tasks, config, run_stats=None, analytics=None):
     lines = [
         "# TaskNemo",
         "",
-        f"> Last synced: {timestamp} | Focus: {focus_count} \u00b7 Due soon (48h): {due_soon_count} \u00b7 Stale (idle \u22653d): {stale_count}",
+        f"> Last synced: {timestamp} | Focus: {focus_count} \u00b7 Due soon: {len(due_soon)} \u00b7 Nudge: {len(nudge_due)} \u00b7 Stale (idle \u22653d): {stale_count}",
         "",
     ]
 
@@ -1791,7 +1815,7 @@ def render_dashboard_v2(tasks, config, run_stats=None, analytics=None):
     def _render_grouped_open_section():
         lines.append("---")
         lines.append("")
-        lines.append(f"> [!todo] \U0001f4da Open ({len(open_grouped)})")
+        lines.append(f"> [!todo] \U0001f4cb Open ({len(open_grouped)})")
         lines.append(">")
         if not open_grouped:
             lines.append("> *No other open tasks.*")
@@ -1857,16 +1881,25 @@ def render_dashboard_v2(tasks, config, run_stats=None, analytics=None):
 
         lines.append("")
 
-    _render_section_v2("warning", "\U0001f525 Focus Now (Top 5)", focus,
+    # My Actions
+    lines.append("## My Actions")
+    lines.append("")
+    _render_section_v2("warning", "\U0001f525 Focus Now", focus,
                        "No high-priority tasks right now.", "focus")
-    _render_section_v2("danger", "\u23f0 Due in 48 hours", due_48h,
-                       "Nothing due soon.", "due_48h")
-    _render_section_v2("question", "\U0001f7e0 Nudge Due", nudge_due,
-                       "No nudges needed.", "nudge_due")
+    _render_section_v2("danger", "\u23f0 Due Soon", due_soon,
+                       "Nothing due soon.", "due_soon")
     _render_grouped_open_section()
-    _render_section_v2("example", "\u23f3 Waiting (fresh)", waiting_fresh,
+    _render_section_v2("example", "\U0001f50d Stale \u2014 Close or Chase", needs_followup,
+                       "Nothing stale \u2014 you're on top of it.", "needs_followup")
+
+    # Following Up
+    lines.append("## Following Up")
+    lines.append("")
+    _render_section_v2("question", "\U0001f4e3 Nudge Needed", nudge_due,
+                       "No nudges needed.", "nudge_due")
+    _render_section_v2("example", "\u23f3 Waiting for Reply", waiting_outbound,
                        "Nothing waiting.", "waiting")
-    _render_section_v2("success", "Recently Closed", recently_closed,
+    _render_section_v2("success", "\u2705 Recently Closed", recently_closed,
                        "No recently closed tasks.", "closed")
 
     return "\n".join(lines)
@@ -2257,7 +2290,7 @@ def run_transitions(conversation_signals, sync_context):
 
     transitions = evaluate_transitions(
         all_tasks, followup_signals={}, today=today,
-        conversation_signals=conversation_signals,
+        conversation_signals=conversation_signals, config=config,
     )
     run_stats["transitions"] = len(transitions)
 
@@ -2703,7 +2736,8 @@ def cmd_init(force=False, vault_path=None):
             "conversation_query_template": "Show me all my Teams conversations since {since_date}",
             "completion_query_template": "Which of my Teams conversations since {since_date} have been resolved or completed, where someone said thanks or confirmed something was finished?",
             "auto_close_likely_done_days": 3,
-            "auto_close_stale_days": 14,
+            "auto_close_stale_days": 7,
+            "auto_close_open_days": 10,
             "urgency_keywords": ["urgent", "asap", "eod", "eow", "today", "tomorrow", "blocker", "blocking", "critical", "immediately", "p0", "p1", "deadline", "overdue", "time-sensitive", "high priority"],
             "completion_keywords": ["thanks", "done", "shipped", "approved", "completed", "merged", "resolved", "closed", "fixed", "lgtm", "looks good"],
             "waiting_keywords": ["waiting", "pending", "blocked on", "need input", "awaiting", "depends on", "hold", "on hold"],
@@ -2907,7 +2941,7 @@ def cmd_refresh():
     today = datetime.now().isoformat()
     transitions = evaluate_transitions(
         store["tasks"], followup_signals={}, today=today,
-        conversation_signals=[],
+        conversation_signals=[], config=config,
     )
     if transitions:
         save_tasks(store)

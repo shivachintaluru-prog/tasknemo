@@ -18,6 +18,7 @@ from task_dashboard import (
     match_conversation_to_tasks,
     find_cross_source_match,
     merge_cross_source_signal,
+    evaluate_transitions,
 )
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
@@ -118,7 +119,7 @@ class TestSyncPrepare:
     def test_calculates_since_date(self):
         with patch("task_dashboard.load_config") as mock_config, \
              patch("task_dashboard.sync_dashboard_completions", return_value=[]), \
-             patch("task_dashboard.calculate_since_date", return_value="February 28, 2026") as mock_calc, \
+             patch("task_dashboard.calculate_since_date", return_value="March 01, 2026") as mock_calc, \
              patch("task_dashboard.build_all_queries", return_value={}), \
              patch("task_dashboard.list_tasks", return_value=[]):
             mock_config.return_value = {
@@ -128,7 +129,7 @@ class TestSyncPrepare:
             }
             ctx = sync_prepare()
             mock_calc.assert_called_once_with("2026-03-02T00:00:00", 2)
-            assert ctx["since_date"] == "February 28, 2026"
+            assert ctx["since_date"] == "March 01, 2026"
 
     def test_open_tasks_only_includes_non_closed(self):
         open_task = _make_task(task_id="TASK-001", state="open")
@@ -387,3 +388,52 @@ class TestFinalizeSync:
             ctx["config"]["dashboard_filename"] = "TaskNemo.md"
             path = finalize_sync({}, ctx)
             assert path == "/vault/TaskNemo.md"
+
+
+# ---------------------------------------------------------------------------
+# Staleness auto-close tests
+# ---------------------------------------------------------------------------
+
+
+class TestStalenessAutoClose:
+    def test_open_auto_close_after_10_days(self):
+        """Open task aged 11d with no signals → closed."""
+        task = _make_task(task_id="TASK-STALE-OPEN")
+        task["created"] = (datetime.now() - timedelta(days=11)).isoformat()
+        task["updated"] = task["created"]
+        task["state_history"] = [{"state": "open", "reason": "test", "date": task["created"]}]
+        today = datetime.now().isoformat()
+        transitions = evaluate_transitions([task], {}, today)
+        assert len(transitions) == 1
+        assert transitions[0][0] == "TASK-STALE-OPEN"
+        assert transitions[0][2] == "closed"
+        assert "Stale open auto-close" in transitions[0][3]
+
+    def test_needs_followup_closes_after_7_days_in_state(self):
+        """Task entered needs_followup 8 days ago → closed."""
+        task = _make_task(task_id="TASK-NF-STALE")
+        task["created"] = (datetime.now() - timedelta(days=12)).isoformat()
+        task["state"] = "needs_followup"
+        nf_date = (datetime.now() - timedelta(days=8)).isoformat()
+        task["state_history"] = [
+            {"state": "open", "reason": "test", "date": task["created"]},
+            {"state": "needs_followup", "reason": "stale", "date": nf_date},
+        ]
+        today = datetime.now().isoformat()
+        transitions = evaluate_transitions([task], {}, today)
+        assert len(transitions) == 1
+        assert transitions[0][2] == "closed"
+
+    def test_needs_followup_not_closed_if_recently_entered(self):
+        """Created 15d ago but entered needs_followup yesterday → NOT closed."""
+        task = _make_task(task_id="TASK-NF-RECENT")
+        task["created"] = (datetime.now() - timedelta(days=15)).isoformat()
+        task["state"] = "needs_followup"
+        nf_date = (datetime.now() - timedelta(days=1)).isoformat()
+        task["state_history"] = [
+            {"state": "open", "reason": "test", "date": task["created"]},
+            {"state": "needs_followup", "reason": "stale", "date": nf_date},
+        ]
+        today = datetime.now().isoformat()
+        transitions = evaluate_transitions([task], {}, today)
+        assert len(transitions) == 0

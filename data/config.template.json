@@ -31,9 +31,21 @@
   "transcript_extraction_query_template": "For each of my meetings since {since_date} that has a transcript, read the transcript and extract ALL action items and commitments. For each one include: (1) what the action item is, (2) who committed to it — me or someone else, (3) any deadline mentioned, (4) the meeting title and link. Be exhaustive — include every commitment, even small ones.",
   "sent_items_query_template": "Check my sent emails and outgoing Teams messages since {since_date}. What actions have I already completed? Look for emails I sent, documents I shared, replies I gave, and messages where I delivered on a commitment. For each, include what I did, who I sent it to, when, and the link.",
   "outbound_query_template": "Show me ALL my sent messages and emails since {since_date} where the recipient has NOT replied. Include: recipient, what I said, when, and the link.",
-  "inbound_dms_query_template": "Show me all direct messages and emails sent to me since {since_date} where I have NOT replied yet. Exclude group chats, channel messages, automated notifications, and bot messages. For each, include the sender, what they said, when they sent it, and the link.",
+  "all_received_query_template": "Show me ALL messages I received in ALL Teams chats (1:1, group chats, and channels) since {since_date}. Include: sender name, full message text, chat/channel name, timestamp, and the Teams link. Do not filter by reply status. Do not summarize — show actual message content.",
+  "key_contacts": [],
+  "query_strategy": "two_phase",
+  "max_detail_queries_per_source": 25,
+  "chats_discovery_query_template": "List all Teams chats (1:1, group, channels) where I received or sent messages since {since_date}. For each, show: chat name, chat type (1:1/group/channel), the other participants. Do not show message content.",
+  "email_discovery_query_template": "List all emails I received since {since_date} from real people (exclude automated notifications, newsletters, bot messages). For each: sender name, subject, date, and whether I replied. Do not include body text.",
+  "sent_items_discovery_query_template": "List all emails I sent and Teams messages I posted since {since_date}. For each: recipient(s), subject or topic, date, and whether they replied. Do not include body text.",
+  "calendar_discovery_query_template": "List all my calendar events since {since_date}. For each: title, date/time, attendees, and whether a transcript or recording is available.",
+  "chats_detail_query_template": "Show me all messages in my {chat_type} chat '{chat_name}' since {since_date}. Include sender, full message text, timestamp, Teams link. Do not summarize.",
+  "email_detail_query_template": "Show me the full email from {sender} with subject '{subject}'. Include complete body, all recipients, and Outlook link.",
+  "sent_items_detail_query_template": "Show me what I sent to {recipient} about '{subject}' on {date}, and show any replies they sent back. Include full text and links.",
+  "validation_query_template": "What are all my pending tasks, action items, and open commitments since {since_date}? Include anything someone asked me to do, anything I committed to in a meeting, and any emails or messages that need my response. For each, show: who asked, what they need, and the source.",
   "scoring": {
-    "calendar_boost": 5
+    "calendar_boost": 5,
+    "manual_boost": 15
   },
   "last_run": null,
   "next_task_id": 1,

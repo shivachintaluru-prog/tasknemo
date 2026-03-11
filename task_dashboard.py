@@ -209,18 +209,18 @@ STOP_WORDS = {
 }
 
 
-def calculate_since_date(last_run, overlap_days):
+def calculate_since_date(last_run, overlap_days=2):
     """Return a human-readable date string for 'since' queries.
 
     If last_run is None (first run), defaults to 7 days ago.
-    Otherwise, goes back to last_run minus 1 day for a tight query window.
+    Otherwise, goes back to last_run minus overlap_days for safe coverage.
     """
     today = datetime.now()
     if last_run is None:
         since = today - timedelta(days=7)
     else:
         last = datetime.fromisoformat(last_run)
-        since = last - timedelta(days=1)
+        since = last - timedelta(days=overlap_days)
     return since.strftime("%B %d, %Y")
 
 
@@ -364,21 +364,41 @@ def build_outbound_query(since_date, config=None):
     return template.format(since_date=since_date)
 
 
-def build_inbound_dms_query(since_date, config=None):
-    """Return 1 WorkIQ query to find inbound DMs/emails the user hasn't replied to.
+def build_all_received_query(since_date, config=None):
+    """Return 1 WorkIQ query for ALL received messages (not just unreplied).
 
-    Catches simple unreplied messages that may not contain an explicit ask
-    but still need a response (e.g., someone says "hey, can we chat?" or
-    shares a doc without a clear question).
+    Replaces the old unreplied-only DM query to avoid missing tasks in
+    conversations where the user already replied to earlier messages.
     """
     template = (config or {}).get(
-        "inbound_dms_query_template",
-        "Show me all direct messages and emails sent to me since {since_date} "
-        "where I have NOT replied yet. Exclude group chats, channel messages, "
-        "automated notifications, and bot messages. For each, include the "
-        "sender, what they said, when they sent it, and the link.",
+        "all_received_query_template",
+        "Show me ALL messages I received in ALL Teams chats (1:1, group chats, "
+        "and channels) since {since_date}. Include: sender name, full message "
+        "text, chat/channel name, timestamp, and the Teams link. Do not filter "
+        "by reply status. Do not summarize — show actual message content.",
     )
     return template.format(since_date=since_date)
+
+
+# Keep old name as alias for backwards compatibility in tests
+build_inbound_dms_query = build_all_received_query
+
+
+def build_key_contact_queries(since_date, config=None):
+    """Return per-person WorkIQ queries for key contacts.
+
+    Fills WorkIQ's recall gaps — broad queries miss conversations,
+    but targeted per-person queries reliably return results.
+    """
+    contacts = (config or {}).get("key_contacts", [])
+    queries = {}
+    for name in contacts:
+        queries[name] = (
+            f"Show me ALL messages from {name} sent to me since {since_date}. "
+            "Show the exact message text, timestamp, and chat name. "
+            "Do not summarize."
+        )
+    return queries
 
 
 def build_doc_mentions_queries(since_date, config=None):
@@ -412,20 +432,156 @@ def build_doc_mentions_queries(since_date, config=None):
     }
 
 
-def build_all_queries(since_date, config=None):
-    """Build queries for all enabled sources. Returns dict keyed by source.
+def build_discovery_queries(since_date, config=None):
+    """Return Phase 1 (discovery) queries keyed by source.
 
-    v2 structure — no separate completion queries (intelligence moves to
-    Claude + Python reasoning over the raw data):
+    These are lightweight enumeration queries — list names/subjects only,
+    no message body text. WorkIQ handles simple listing reliably.
+    """
+    cfg = config or {}
+    enabled = cfg.get("sources_enabled", ["teams"])
+    result = {}
 
-        {"teams": {"conversations": str},
-         "email": {"all": str},
-         "calendar": {"all": str,
-                      "transcript_discovery": str,
-                      "transcript_extraction": str},
-         "sent_items": str,
-         "outbound": str,
-         "inbound_dms": str}
+    # Chats discovery — replaces both teams + all_received
+    chats_template = cfg.get(
+        "chats_discovery_query_template",
+        "List all Teams chats (1:1, group, channels) where I received or "
+        "sent messages since {since_date}. For each, show: chat name, chat "
+        "type (1:1/group/channel), the other participants. Do not show "
+        "message content.",
+    )
+    result["chats"] = chats_template.format(since_date=since_date)
+
+    if "email" in enabled:
+        email_template = cfg.get(
+            "email_discovery_query_template",
+            "List all emails I received since {since_date} from real people "
+            "(exclude automated notifications, newsletters, bot messages). "
+            "For each: sender name, subject, date, and whether I replied. "
+            "Do not include body text.",
+        )
+        result["email"] = email_template.format(since_date=since_date)
+
+    # Sent items discovery — replaces both sent_items + outbound
+    if "calendar" in enabled or "email" in enabled:
+        sent_template = cfg.get(
+            "sent_items_discovery_query_template",
+            "List all emails I sent and Teams messages I posted since "
+            "{since_date}. For each: recipient(s), subject or topic, date, "
+            "and whether they replied. Do not include body text.",
+        )
+        result["sent_items"] = sent_template.format(since_date=since_date)
+
+    if "calendar" in enabled:
+        cal_template = cfg.get(
+            "calendar_discovery_query_template",
+            "List all my calendar events since {since_date}. For each: "
+            "title, date/time, attendees, and whether a transcript or "
+            "recording is available.",
+        )
+        result["calendar"] = cal_template.format(since_date=since_date)
+
+    return result
+
+
+def _build_chats_detail_queries(items, since_date, config):
+    """Return per-chat detail queries from discovery items."""
+    cfg = config or {}
+    template = cfg.get(
+        "chats_detail_query_template",
+        "Show me all messages in my {chat_type} chat '{chat_name}' since "
+        "{since_date}. Include sender, full message text, timestamp, Teams "
+        "link. Do not summarize.",
+    )
+    queries = []
+    for item in items:
+        queries.append(template.format(
+            chat_type=item.get("chat_type", "1:1"),
+            chat_name=item.get("chat_name", "Unknown"),
+            since_date=since_date,
+        ))
+    return queries
+
+
+def _build_email_detail_queries(items, since_date, config):
+    """Return per-email detail queries from discovery items."""
+    cfg = config or {}
+    template = cfg.get(
+        "email_detail_query_template",
+        "Show me the full email from {sender} with subject '{subject}'. "
+        "Include complete body, all recipients, and Outlook link.",
+    )
+    queries = []
+    for item in items:
+        queries.append(template.format(
+            sender=item.get("sender", "Unknown"),
+            subject=item.get("subject", ""),
+            since_date=since_date,
+        ))
+    return queries
+
+
+def _build_sent_items_detail_queries(items, since_date, config):
+    """Return per-sent-item detail queries from discovery items."""
+    cfg = config or {}
+    template = cfg.get(
+        "sent_items_detail_query_template",
+        "Show me what I sent to {recipient} about '{subject}' on {date}, "
+        "and show any replies they sent back. Include full text and links.",
+    )
+    queries = []
+    for item in items:
+        queries.append(template.format(
+            recipient=item.get("recipient", "Unknown"),
+            subject=item.get("subject", ""),
+            date=item.get("date", ""),
+            since_date=since_date,
+        ))
+    return queries
+
+
+def build_detail_queries(source, discovery_items, since_date, config=None):
+    """Build Phase 2 (detail) queries from Phase 1 discovery results.
+
+    Takes structured discovery items and returns per-item detail query strings.
+    Respects max_detail_queries_per_source config limit.
+    """
+    cfg = config or {}
+    max_queries = cfg.get("max_detail_queries_per_source", 25)
+    items = discovery_items[:max_queries]
+
+    builders = {
+        "chats": _build_chats_detail_queries,
+        "email": _build_email_detail_queries,
+        "sent_items": _build_sent_items_detail_queries,
+    }
+    builder = builders.get(source)
+    if builder is None:
+        return []
+    return builder(items, since_date, cfg)
+
+
+def build_validation_query(since_date, config=None):
+    """Return the Phase 3 validation query for cross-checking extracted tasks.
+
+    Run AFTER all Phase 1+2 extraction. Compare WorkIQ's interpretive task
+    list against already-extracted tasks to identify potential gaps.
+    Do NOT blindly create tasks from this — verify against raw data first.
+    """
+    template = (config or {}).get(
+        "validation_query_template",
+        "What are all my pending tasks, action items, and open commitments "
+        "since {since_date}? Include anything someone asked me to do, anything "
+        "I committed to in a meeting, and any emails or messages that need my "
+        "response. For each, show: who asked, what they need, and the source.",
+    )
+    return template.format(since_date=since_date)
+
+
+def _build_all_queries_legacy(since_date, config):
+    """Legacy single-phase query builder (backward compat).
+
+    Returns the old flat dict structure keyed by source.
     """
     cfg = config or {}
     enabled = cfg.get("sources_enabled", ["teams"])
@@ -451,18 +607,45 @@ def build_all_queries(since_date, config=None):
             "transcript_extraction": transcript_qs[1],
         }
 
-    # Sent items check — always included when calendar or email is enabled
     if "calendar" in enabled or "email" in enabled:
         result["sent_items"] = build_sent_items_query(since_date, cfg)
 
-    # Outbound requests — always included (tracks what user asked others to do)
     result["outbound"] = build_outbound_query(since_date, cfg)
-
-    # Inbound DMs — always included (tracks unreplied messages sent to the user)
-    result["inbound_dms"] = build_inbound_dms_query(since_date, cfg)
-
-    # Document mentions — always included (catches @mentions in docs/slides/Loop)
+    result["all_received"] = build_all_received_query(since_date, cfg)
+    result["key_contacts"] = build_key_contact_queries(since_date, cfg)
     result["doc_mentions"] = build_doc_mentions_queries(since_date, cfg)
+
+    return result
+
+
+def build_all_queries(since_date, config=None):
+    """Build queries for all enabled sources.
+
+    Two modes controlled by config["query_strategy"]:
+    - "single_phase" → legacy flat dict (backward compat)
+    - "two_phase" (default) → Phase 1 discovery + targeted queries + validation
+    """
+    cfg = config or {}
+
+    if cfg.get("query_strategy") == "single_phase":
+        return _build_all_queries_legacy(since_date, cfg)
+
+    result = {}
+
+    # Phase 1: Discovery queries
+    result["phase1"] = build_discovery_queries(since_date, cfg)
+
+    # Already-targeted queries (no phase split needed)
+    enabled = cfg.get("sources_enabled", ["teams"])
+    if "calendar" in enabled:
+        transcript_qs = build_transcript_queries(since_date, cfg)
+        result["transcript_discovery"] = transcript_qs[0]
+        result["transcript_extraction"] = transcript_qs[1]
+
+    result["doc_mentions"] = build_doc_mentions_queries(since_date, cfg)
+
+    # Phase 3: Validation query
+    result["validation"] = build_validation_query(since_date, cfg)
 
     return result
 
@@ -531,7 +714,8 @@ def find_cross_source_match(new_task_dict, existing_tasks, threshold=0.5):
     """Find a matching task across sources using sender + fuzzy title.
 
     Matches an incoming task dict (must have "sender" and "title") against
-    existing open tasks from any source. Closed tasks are excluded.
+    ALL existing tasks from any source, including closed and likely_done.
+    This prevents re-creating tasks that were already closed.
 
     Returns the matched task dict or None.
     """
@@ -540,15 +724,14 @@ def find_cross_source_match(new_task_dict, existing_tasks, threshold=0.5):
     if not new_sender or not new_title:
         return None
 
-    open_tasks = [
+    candidates = [
         t for t in existing_tasks
-        if t.get("state") != "closed"
-        and normalize_text(t.get("sender", "")) == new_sender
+        if normalize_text(t.get("sender", "")) == new_sender
     ]
-    if not open_tasks:
+    if not candidates:
         return None
 
-    return fuzzy_match(new_title, open_tasks, threshold=threshold)
+    return fuzzy_match(new_title, candidates, threshold=threshold)
 
 
 def merge_cross_source_signal(existing_task, new_source, new_link):
@@ -788,13 +971,17 @@ def add_task(task_dict, config):
     task_id = next_task_id(config)
     task_dict["id"] = task_id
     task_dict.setdefault("state", "open")
+    # Outbound tasks start in "waiting" — user is waiting on someone else
+    if task_dict.get("direction") == "outbound" and task_dict.get("state") == "open":
+        task_dict["state"] = "waiting"
     task_dict.setdefault("score", 0)
     task_dict.setdefault("score_breakdown", {})
     source = task_dict.get("source", "teams")
-    source_labels = {"teams": "Teams", "email": "email", "calendar": "calendar", "doc_mentions": "Document Mention"}
+    source_labels = {"teams": "Teams", "email": "email", "calendar": "calendar", "doc_mentions": "Document Mention", "all_received": "Teams message", "key_contacts": "key contact message"}
+    initial_state = task_dict.get("state", "open")
     reason = f"Extracted from {source_labels.get(source, source)}"
     task_dict.setdefault("state_history", [
-        {"state": "open", "reason": reason, "date": datetime.now().isoformat()}
+        {"state": initial_state, "reason": reason, "date": datetime.now().isoformat()}
     ])
     task_dict.setdefault("times_seen", 1)
     task_dict.setdefault("created", datetime.now().isoformat())
@@ -1116,9 +1303,16 @@ def score_task(task, config, analytics=None):
     pin = get_pin_bonus(task.get("id", ""), analytics)
     breakdown["pin"] = pin
 
+    # Manual/inbox task boost — ensures manually added tasks surface in Focus Now
+    if task.get("source") == "manual":
+        manual_boost = config.get("scoring", {}).get("manual_boost", 15)
+    else:
+        manual_boost = 0
+    breakdown["manual_boost"] = manual_boost
+
     total = (stakeholder_score + urgency_score + age_score + thread_score
              + subtask_boost + calendar_boost + multi_source
-             + response_time + escalation + pin)
+             + response_time + escalation + pin + manual_boost)
     task["score"] = min(total, 100)
     task["score_breakdown"] = breakdown
     return task["score"]
@@ -1794,6 +1988,15 @@ def render_dashboard_v2(tasks, config, run_stats=None, analytics=None):
         lines.append(f"> Run: +{new_count} new, {transitions_count} transitions")
         lines.append("")
 
+    # Task Inbox section — embedded at top of dashboard
+    lines.append("## Task Inbox")
+    lines.append("Add tasks below \u2014 they'll be imported on next sync or refresh.")
+    lines.append("")
+    lines.append("- ")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
     def _render_section_v2(callout_type, title, items, empty_msg, section_key=None):
         lines.append("---")
         lines.append("")
@@ -2142,23 +2345,36 @@ def sync_prepare():
         if pre_closed:
             score_all_tasks(config)
 
+    # Import inbox tasks (from dashboard section + legacy file)
+    inbox_ids = []
+    if vault_path:
+        inbox_ids += sync_inbox(vault_path, dash_file)
+        inbox_ids += sync_inbox(vault_path, "Task Inbox.md")
+
     since_date = calculate_since_date(
         config.get("last_run"), config.get("overlap_days", 2)
     )
+    since_dt = datetime.strptime(since_date, "%B %d, %Y")
+    since_date_iso = since_dt.strftime("%Y-%m-%d")
     all_queries = build_all_queries(since_date, config)
     open_tasks = list_tasks(states={"open", "needs_followup", "waiting"})
+    all_tasks = list_tasks()  # All states including closed/likely_done for dedup
 
     return {
         "config": config,
         "since_date": since_date,
+        "since_date_iso": since_date_iso,
         "all_queries": all_queries,
         "open_tasks": open_tasks,
+        "all_tasks": all_tasks,
         "pre_closed": pre_closed,
+        "inbox_ids": inbox_ids,
         "run_stats": {
             "new_tasks": 0,
             "transitions": 0,
             "merged": 0,
             "skipped": 0,
+            "source_counts": {},
         },
     }
 
@@ -2186,7 +2402,7 @@ def process_source_items(source, items, sync_context):
     Note: This function does NOT call add_task() — it returns to_create
     so Claude can do a final sanity check before persisting.
     """
-    open_tasks = sync_context["open_tasks"]
+    all_tasks = sync_context.get("all_tasks", sync_context["open_tasks"])
     run_stats = sync_context["run_stats"]
     to_create = []
     merged_ids = []
@@ -2200,13 +2416,26 @@ def process_source_items(source, items, sync_context):
             run_stats["skipped"] += 1
             continue
 
-        # Try cross-source match
+        # Skip items with extracted_date before the sync window
+        item_date = item.get("extra", {}).get("extracted_date", "")
+        since_iso = sync_context.get("since_date_iso", "")
+        if item_date and since_iso and item_date < since_iso:
+            skipped += 1
+            run_stats["skipped"] += 1
+            continue
+
+        # Try cross-source match against ALL tasks (including closed)
         match = find_cross_source_match(
             {"sender": item.get("sender", ""), "title": item.get("title", "")},
-            open_tasks,
+            all_tasks,
         )
 
         if match:
+            if match.get("state") in ("closed", "likely_done"):
+                # Don't recreate closed/likely_done tasks
+                skipped += 1
+                run_stats["skipped"] += 1
+                continue
             merge_cross_source_signal(
                 match, source, item.get("link", "")
             )
@@ -2501,40 +2730,82 @@ def cmd_sync_info():
     if pre_closed:
         print(f"[pre-sync] Closed {len(pre_closed)} tasks marked done in Obsidian: {', '.join(pre_closed)}")
 
+    inbox_ids = ctx.get("inbox_ids", [])
+    if inbox_ids:
+        print(f"[pre-sync] Imported {len(inbox_ids)} inbox task(s): {', '.join(inbox_ids)}")
+
     print("=== TaskNemo Sync ===")
     print(f"Since: {since} | Last run: {config.get('last_run', 'never')} | Open tasks: {len(open_tasks)}")
     print()
 
-    # Print queries
-    query_num = 1
-    print("WorkIQ queries (run all via ask_work_iq):")
-    if "teams" in all_queries:
-        print(f"  {query_num}. [Teams conversations] {all_queries['teams']['conversations']}")
-        query_num += 1
-    if "email" in all_queries:
-        print(f"  {query_num}. [Email - all] {all_queries['email']['all']}")
-        query_num += 1
-    if "calendar" in all_queries:
-        print(f"  {query_num}. [Calendar - all] {all_queries['calendar']['all']}")
-        query_num += 1
-        print(f"  {query_num}. [Transcript discovery] {all_queries['calendar']['transcript_discovery']}")
-        query_num += 1
-        print(f"  {query_num}. [Transcript extraction] {all_queries['calendar']['transcript_extraction']}")
-        query_num += 1
-    if "sent_items" in all_queries:
-        print(f"  {query_num}. [Sent items] {all_queries['sent_items']}")
-        query_num += 1
-    if "outbound" in all_queries:
-        print(f"  {query_num}. [Outbound unreplied] {all_queries['outbound']}")
-        query_num += 1
-    if "inbound_dms" in all_queries:
-        print(f"  {query_num}. [Inbound DMs] {all_queries['inbound_dms']}")
-        query_num += 1
+    # Check for 2-phase vs legacy mode
+    if "phase1" in all_queries:
+        # 2-phase display
+        query_num = 1
+        print("--- Phase 1: Discovery (run all in parallel) ---")
+        for source, query in all_queries["phase1"].items():
+            print(f"  {query_num}. [{source.title()} discovery] {query}")
+            query_num += 1
+
+        print()
+        print("--- Phase 2: Detail (per-item, after Phase 1) ---")
+        print("  For each discovered item, call:")
+        print("    build_detail_queries(source, items, since_date, config)")
+        print("  Process sent_items details FIRST for completion evidence.")
+        print()
+
+        print("--- Already-Targeted (run as-is) ---")
+        if "transcript_discovery" in all_queries:
+            print(f"  {query_num}. [Transcript discovery] {all_queries['transcript_discovery']}")
+            query_num += 1
+            print(f"  {query_num}. [Transcript extraction] {all_queries['transcript_extraction']}")
+            query_num += 1
+        if "doc_mentions" in all_queries:
+            dm = all_queries["doc_mentions"]
+            print(f"  {query_num}. [Doc mentions - email] {dm.get('email_notifications', '')}")
+            query_num += 1
+            print(f"  {query_num}. [Doc mentions - direct] {dm.get('direct_search', '')}")
+            query_num += 1
+        if "validation" in all_queries:
+            print()
+            print(f"--- Phase 3: Validation (run AFTER all extraction) ---")
+            print(f"  {query_num}. [Validation] {all_queries['validation']}")
+            query_num += 1
+    else:
+        # Legacy single-phase display
+        query_num = 1
+        print("WorkIQ queries (run all via ask_work_iq):")
+        if "teams" in all_queries:
+            print(f"  {query_num}. [Teams conversations] {all_queries['teams']['conversations']}")
+            query_num += 1
+        if "email" in all_queries:
+            print(f"  {query_num}. [Email - all] {all_queries['email']['all']}")
+            query_num += 1
+        if "calendar" in all_queries:
+            print(f"  {query_num}. [Calendar - all] {all_queries['calendar']['all']}")
+            query_num += 1
+            print(f"  {query_num}. [Transcript discovery] {all_queries['calendar']['transcript_discovery']}")
+            query_num += 1
+            print(f"  {query_num}. [Transcript extraction] {all_queries['calendar']['transcript_extraction']}")
+            query_num += 1
+        if "sent_items" in all_queries:
+            print(f"  {query_num}. [Sent items] {all_queries['sent_items']}")
+            query_num += 1
+        if "outbound" in all_queries:
+            print(f"  {query_num}. [Outbound unreplied] {all_queries['outbound']}")
+            query_num += 1
+        if "all_received" in all_queries:
+            print(f"  {query_num}. [All received messages] {all_queries['all_received']}")
+            query_num += 1
+        if "key_contacts" in all_queries and all_queries["key_contacts"]:
+            for name, q in all_queries["key_contacts"].items():
+                print(f"  {query_num}. [Key contact: {name}] {q}")
+                query_num += 1
 
     print(f"""
 Pipeline (call in order):
   0. sync_prepare()             -> returns sync_context (already done above)
-  1. Run WorkIQ queries above
+  1. Run WorkIQ queries (Phase 1 discovery, then Phase 2 detail per item)
   2. For each source response:
      - Extract items as [{{sender, title, link, direction, signal_type, already_done, extra}}]
      - Call process_source_items(source, items, sync_context)
@@ -2542,10 +2813,8 @@ Pipeline (call in order):
   3. Build completion signals from conversation analysis:
      - Call build_completion_signals(completion_items, open_tasks)
   4. Call run_transitions(all_signals, sync_context)
-  5. Call finalize_sync(run_stats, sync_context)
-
-Judgment rules are in the docstrings of process_source_items(),
-build_completion_signals(), and evaluate_transitions().
+  5. Run validation query — compare against extracted tasks, verify gaps
+  6. Call finalize_sync(run_stats, sync_context)
 
 CRITICAL: Always check sent items BEFORE creating tasks. Transcripts
 are the richest task source — extract BOTH inbound and outbound.""")
@@ -2612,11 +2881,12 @@ def cmd_migrate():
         "question, or assigned something and the other person has not replied "
         "or acknowledged. For each, include the person, what I asked, when I "
         "sent it, and the link.")
-    config.setdefault("inbound_dms_query_template",
-        "Show me all direct messages and emails sent to me since {since_date} "
-        "where I have NOT replied yet. Exclude group chats, channel messages, "
-        "automated notifications, and bot messages. For each, include the "
-        "sender, what they said, when they sent it, and the link.")
+    config.setdefault("all_received_query_template",
+        "Show me ALL messages I received in ALL Teams chats (1:1, group chats, "
+        "and channels) since {since_date}. Include: sender name, full message "
+        "text, chat/channel name, timestamp, and the Teams link. Do not filter "
+        "by reply status. Do not summarize — show actual message content.")
+    config.setdefault("key_contacts", [])
     # v2 pipeline: query_mode controls raw vs smart WorkIQ queries
     config.setdefault("query_mode", "raw")
 
@@ -2751,7 +3021,8 @@ def cmd_init(force=False, vault_path=None):
             "transcript_extraction_query_template": "For each of my meetings since {since_date} that has a transcript, read the transcript and extract ALL action items and commitments. For each one include: (1) what the action item is, (2) who committed to it — me or someone else, (3) any deadline mentioned, (4) the meeting title and link. Be exhaustive — include every commitment, even small ones.",
             "sent_items_query_template": "Check my sent emails and outgoing Teams messages since {since_date}. What actions have I already completed? Look for emails I sent, documents I shared, replies I gave, and messages where I delivered on a commitment. For each, include what I did, who I sent it to, when, and the link.",
             "outbound_query_template": "Show me ALL my sent messages and emails since {since_date} where the recipient has NOT replied. Include: recipient, what I said, when, and the link.",
-            "inbound_dms_query_template": "Show me all direct messages and emails sent to me since {since_date} where I have NOT replied yet. Exclude group chats, channel messages, automated notifications, and bot messages. For each, include the sender, what they said, when they sent it, and the link.",
+            "all_received_query_template": "Show me ALL messages I received in ALL Teams chats (1:1, group chats, and channels) since {since_date}. Include: sender name, full message text, chat/channel name, timestamp, and the Teams link. Do not filter by reply status. Do not summarize — show actual message content.",
+            "key_contacts": [],
             "scoring": {"calendar_boost": 5},
             "last_run": None,
             "next_task_id": 1,
@@ -2818,6 +3089,14 @@ def cmd_upgrade():
     # Merge new keys from template (never overwrites existing values)
     added = _deep_merge_defaults(template, config)
 
+    # Ensure query_strategy is set (upgrade from legacy)
+    if "query_strategy" not in config:
+        config["query_strategy"] = "two_phase"
+        added.append("query_strategy")
+    if "max_detail_queries_per_source" not in config:
+        config["max_detail_queries_per_source"] = 25
+        added.append("max_detail_queries_per_source")
+
     if added:
         save_config(config)
         print(f"[upgrade] Added {len(added)} new config key(s):")
@@ -2836,34 +3115,8 @@ _INBOX_INLINE_FLAG_RE = re.compile(r"\s+--(\w+)\s+(.+?)(?=\s+--|$)")
 _INBOX_TASK_RE = re.compile(r"^[-*]\s+\[?\s?\]?\s*(.+)$")
 
 
-def sync_inbox(vault_path, filename="Task Inbox.md"):
-    """Import tasks from the Obsidian inbox file.
-
-    Each line matching '- [ ] text' or '- text' becomes a new task.
-    Lines starting with # are ignored (headers/comments).
-    After import, the file is cleared (header preserved).
-    Returns list of created task IDs.
-    """
-    path = os.path.join(vault_path, filename)
-    if not os.path.exists(path):
-        return []
-
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    # Separate header lines (starting with # or blank) from task lines
-    header_lines = []
-    task_lines = []
-    in_header = True
-    for line in lines:
-        stripped = line.strip()
-        if in_header and (stripped.startswith("#") or stripped == ""):
-            header_lines.append(line)
-        else:
-            in_header = False
-            task_lines.append(stripped)
-
-    config = load_config()
+def _parse_inbox_tasks(task_lines, config):
+    """Parse task lines and create tasks. Returns list of created task IDs."""
     created_ids = []
     for line in task_lines:
         if not line or line.startswith("#"):
@@ -2872,6 +3125,8 @@ def sync_inbox(vault_path, filename="Task Inbox.md"):
         if not m:
             continue
         raw_title = m.group(1).strip()
+        if not raw_title:
+            continue
 
         # Parse inline flags (--sender, --due)
         sender = "me"
@@ -2884,6 +3139,8 @@ def sync_inbox(vault_path, filename="Task Inbox.md"):
                 due_hint = flag_value.strip()
         # Remove flags from title
         title = _INBOX_INLINE_FLAG_RE.sub("", raw_title).strip()
+        if not title:
+            continue
 
         task_dict = {
             "title": title,
@@ -2898,6 +3155,79 @@ def sync_inbox(vault_path, filename="Task Inbox.md"):
             task_dict["due_hint"] = due_hint
         task_id = add_task(task_dict, config)
         created_ids.append(task_id)
+    return created_ids
+
+
+def sync_inbox(vault_path, filename="Task Inbox.md"):
+    """Import tasks from the Obsidian inbox file or dashboard inbox section.
+
+    When filename is the dashboard file (e.g., TaskNemo.md), parses the
+    embedded '## Task Inbox' section and clears it after import.
+    Otherwise, treats the whole file as an inbox (legacy behavior).
+
+    Each line matching '- [ ] text' or '- text' becomes a new task.
+    Lines starting with # are ignored (headers/comments).
+    Returns list of created task IDs.
+    """
+    path = os.path.join(vault_path, filename)
+    if not os.path.exists(path):
+        return []
+
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    lines = content.split("\n")
+
+    config = load_config()
+
+    # Check if this file has an embedded ## Task Inbox section
+    inbox_start = None
+    inbox_end = None
+    for i, line in enumerate(lines):
+        if line.strip() == "## Task Inbox":
+            inbox_start = i
+        elif inbox_start is not None and line.strip().startswith("## ") and i > inbox_start:
+            inbox_end = i
+            break
+        elif inbox_start is not None and line.strip() == "---" and i > inbox_start + 1:
+            inbox_end = i
+            break
+
+    if inbox_start is not None:
+        # Parse only the inbox section from the dashboard
+        section_end = inbox_end if inbox_end is not None else len(lines)
+        task_lines = [l.strip() for l in lines[inbox_start + 1:section_end]
+                      if l.strip() and not l.strip().startswith("#")]
+        created_ids = _parse_inbox_tasks(task_lines, config)
+
+        # Clear the inbox section (preserve header + instructions + empty bullet)
+        if created_ids:
+            new_section = [
+                "## Task Inbox",
+                "Add tasks below \u2014 they'll be imported on next sync or refresh.",
+                "",
+                "- ",
+            ]
+            new_lines = lines[:inbox_start] + new_section
+            if inbox_end is not None:
+                new_lines += lines[inbox_end:]
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("\n".join(new_lines))
+
+        return created_ids
+
+    # Legacy behavior: whole file is an inbox
+    header_lines = []
+    task_lines = []
+    in_header = True
+    for line in lines:
+        stripped = line.strip()
+        if in_header and (stripped.startswith("#") or stripped == ""):
+            header_lines.append(line + "\n")
+        else:
+            in_header = False
+            task_lines.append(stripped)
+
+    created_ids = _parse_inbox_tasks(task_lines, config)
 
     # Rewrite file to just the header
     if created_ids:

@@ -19,12 +19,34 @@ ctx = sync_prepare()
 Reads back Obsidian completions, calculates the since-date (last_run minus
 overlap_days), builds all WorkIQ queries, and loads open tasks.
 
-### Step 1 — Run WorkIQ Queries
+### Step 1 — Run WorkIQ Queries (2-Phase)
 
-Execute every query in `ctx["all_queries"]` via `ask_work_iq`. The dict is
-keyed by source (`teams`, `email`, `calendar`, `sent_items`, `outbound`,
-`inbound_dms`, `doc_mentions`). Run **sent_items first** — its results
-prevent false-positive task creation from other sources.
+**Phase 1 — Discovery:** Run all queries from `ctx["all_queries"]["phase1"]` in parallel.
+These are lightweight enumeration queries. Extract structured discovery items from each
+response (chat names, email subjects, etc.).
+
+**Phase 2 — Detail:** For each source with discovery items, call:
+```python
+from task_dashboard import build_detail_queries
+queries = build_detail_queries(source, items, ctx["since_date"], ctx["config"])
+```
+Run returned detail queries via `ask_work_iq`. Process **sent_items details FIRST** —
+completion evidence prevents false-positive task creation.
+
+**Optimization:** Skip detail queries for clearly non-actionable items (newsletters,
+bot messages, large channel broadcasts).
+
+**Already-targeted queries** (run as-is, no phase split):
+- `transcript_discovery` + `transcript_extraction` — already 2-step
+- `doc_mentions` — already targeted
+
+**Phase 3 — Validation:** After all extraction and `process_source_items()` calls,
+run `ctx["all_queries"]["validation"]` via `ask_work_iq`. Compare WorkIQ's task list
+against already-extracted tasks. For any net-new items, verify against raw data
+before creating. Log findings in `run_stats["validation_additions"]`.
+
+**Legacy mode:** If `config["query_strategy"] == "single_phase"`, `all_queries`
+returns the old flat structure — run all queries directly without phases.
 
 ### Step 2 — Process Source Items
 
@@ -93,6 +115,7 @@ Each item extracted from a WorkIQ response should be a dict with these keys:
         "description": "...",
         "source": "calendar",        # teams | email | calendar | transcript
         "thread_id": "19:abc@thread.v2",
+        "extracted_date": "2026-03-10",  # date the message was sent (ISO format)
     }
 }
 ```
@@ -132,7 +155,16 @@ Each item extracted from a WorkIQ response should be a dict with these keys:
    Extract tasks ONLY from explicit asks in the raw comment text. Both signals
    feed into `process_source_items()` as source `"doc_mentions"`.
 
-8. **Unknown sender lookup.** When processing a task from someone NOT in
+8. **Date boundary enforcement.** WorkIQ often returns messages outside the
+   requested time window (especially for group chats where it returns full
+   history). When extracting items from Phase 2 detail responses:
+   - Check each message's timestamp against `ctx["since_date"]`
+   - **Skip** any message clearly older than the since_date window
+   - Set `extra.extracted_date` to the message's date (ISO format, e.g., "2026-03-10")
+   - If a message has no timestamp, use best judgment but err on the side of skipping
+   - `process_source_items()` will also reject items with `extracted_date` before the window
+
+9. **Unknown sender lookup.** When processing a task from someone NOT in
    `config["stakeholders"]`, query WorkIQ: *"Who is [Person Name]? What is
    their role, title, and reporting relationship to me?"* Based on the
    response, add them to stakeholders with an appropriate role and weight:

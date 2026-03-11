@@ -12,10 +12,15 @@ from task_dashboard import (
     build_all_queries,
     build_sent_items_query,
     build_outbound_query,
+    build_all_received_query,
     build_inbound_dms_query,
+    build_key_contact_queries,
     merge_duplicates,
     build_doc_mentions_queries,
     build_transcript_queries,
+    build_discovery_queries,
+    build_detail_queries,
+    build_validation_query,
     find_cross_source_match,
     merge_cross_source_signal,
 )
@@ -77,13 +82,15 @@ class TestBuildCalendarQuery:
 
 
 class TestBuildAllQueries:
+    """Tests for build_all_queries in legacy single_phase mode."""
+
     def test_all_sources_enabled(self):
-        config = {"sources_enabled": ["teams", "email", "calendar"]}
+        config = {"sources_enabled": ["teams", "email", "calendar"],
+                  "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "teams" in result
         assert "email" in result
         assert "calendar" in result
-        # v2 structure: no separate completion keys
         assert "conversations" in result["teams"]
         assert isinstance(result["teams"]["conversations"], str)
         assert "all" in result["email"]
@@ -92,25 +99,25 @@ class TestBuildAllQueries:
         assert "transcript_extraction" in result["calendar"]
 
     def test_teams_only(self):
-        config = {"sources_enabled": ["teams"]}
+        config = {"sources_enabled": ["teams"], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "teams" in result
         assert "email" not in result
         assert "calendar" not in result
 
-    def test_empty_sources_still_has_outbound_and_inbound_dms(self):
-        config = {"sources_enabled": []}
+    def test_empty_sources_still_has_outbound_and_all_received(self):
+        config = {"sources_enabled": [], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
-        # No teams/email/calendar, but outbound + inbound_dms are always present
         assert "teams" not in result
         assert "email" not in result
         assert "calendar" not in result
         assert "outbound" in result
-        assert "inbound_dms" in result
+        assert "all_received" in result
+        assert "key_contacts" in result
 
     def test_default_config_teams_only(self):
-        # No sources_enabled key defaults to teams only
-        result = build_all_queries("March 01, 2026", {})
+        config = {"query_strategy": "single_phase"}
+        result = build_all_queries("March 01, 2026", config)
         assert "teams" in result
         assert "email" not in result
 
@@ -154,14 +161,28 @@ class TestFindCrossSourceMatch:
         match = find_cross_source_match(new_task, existing, threshold=0.5)
         assert match is None
 
-    def test_closed_tasks_excluded(self):
+    def test_matches_closed_task(self):
+        """Closed tasks ARE found now (for dedup to prevent re-creation)."""
         existing = [
             _make_task(task_id="T-001", sender="Jordan Kim",
                        title="API schema mapping", state="closed"),
         ]
         new_task = {"sender": "Jordan Kim", "title": "API schema mapping follow-up"}
         match = find_cross_source_match(new_task, existing, threshold=0.5)
-        assert match is None
+        assert match is not None
+        assert match["id"] == "T-001"
+        assert match["state"] == "closed"
+
+    def test_matches_likely_done_task(self):
+        """likely_done tasks ARE found now (for dedup to prevent re-creation)."""
+        existing = [
+            _make_task(task_id="T-001", sender="Jordan Kim",
+                       title="API schema mapping", state="likely_done"),
+        ]
+        new_task = {"sender": "Jordan Kim", "title": "API schema mapping follow-up"}
+        match = find_cross_source_match(new_task, existing, threshold=0.5)
+        assert match is not None
+        assert match["state"] == "likely_done"
 
     def test_empty_sender_returns_none(self):
         existing = [_make_task()]
@@ -244,79 +265,125 @@ class TestBuildOutboundQuery:
         assert "not replied" in query.lower() or "not" in query.lower()
 
 
-class TestBuildInboundDmsQuery:
+class TestBuildAllReceivedQuery:
     def test_returns_string_with_date(self):
-        query = build_inbound_dms_query("March 01, 2026")
+        query = build_all_received_query("March 01, 2026")
         assert isinstance(query, str)
         assert "March 01, 2026" in query
 
     def test_uses_config_template(self):
-        config = {"inbound_dms_query_template": "Unreplied DMs since {since_date}?"}
-        query = build_inbound_dms_query("March 01, 2026", config)
-        assert query == "Unreplied DMs since March 01, 2026?"
+        config = {"all_received_query_template": "All received since {since_date}?"}
+        query = build_all_received_query("March 01, 2026", config)
+        assert query == "All received since March 01, 2026?"
 
-    def test_default_mentions_replied(self):
-        query = build_inbound_dms_query("March 01, 2026")
-        assert "replied" in query.lower() or "reply" in query.lower()
+    def test_no_reply_filter_in_default(self):
+        """The all_received query should NOT filter by reply status."""
+        query = build_all_received_query("March 01, 2026")
+        assert "not replied" not in query.lower()
+        assert "not reply" not in query.lower()
+        assert "haven't replied" not in query.lower()
+
+    def test_backward_compat_alias(self):
+        """build_inbound_dms_query still works as alias."""
+        q1 = build_all_received_query("March 01, 2026")
+        q2 = build_inbound_dms_query("March 01, 2026")
+        assert q1 == q2
+
+
+class TestBuildKeyContactQueries:
+    def test_generates_per_person_queries(self):
+        config = {"key_contacts": ["Alice", "Bob", "Charlie"]}
+        queries = build_key_contact_queries("March 01, 2026", config)
+        assert len(queries) == 3
+        assert "Alice" in queries
+        assert "Alice" in queries["Alice"]
+        assert "March 01, 2026" in queries["Alice"]
+
+    def test_empty_config_returns_empty(self):
+        queries = build_key_contact_queries("March 01, 2026", {})
+        assert queries == {}
+
+    def test_none_config_returns_empty(self):
+        queries = build_key_contact_queries("March 01, 2026", None)
+        assert queries == {}
+
+    def test_no_key_contacts_key_returns_empty(self):
+        config = {"sources_enabled": ["teams"]}
+        queries = build_key_contact_queries("March 01, 2026", config)
+        assert queries == {}
 
 
 class TestBuildAllQueriesWithSentAndOutbound:
+    """Tests for legacy single_phase query structure."""
+
     def test_sent_items_included_when_calendar_enabled(self):
-        config = {"sources_enabled": ["teams", "calendar"]}
+        config = {"sources_enabled": ["teams", "calendar"], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "sent_items" in result
         assert isinstance(result["sent_items"], str)
 
     def test_sent_items_included_when_email_enabled(self):
-        config = {"sources_enabled": ["teams", "email"]}
+        config = {"sources_enabled": ["teams", "email"], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "sent_items" in result
 
     def test_sent_items_excluded_when_no_calendar_or_email(self):
-        config = {"sources_enabled": ["teams"]}
+        config = {"sources_enabled": ["teams"], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "sent_items" not in result
 
     def test_outbound_always_included(self):
-        config = {"sources_enabled": ["teams"]}
+        config = {"sources_enabled": ["teams"], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "outbound" in result
 
     def test_outbound_included_with_empty_sources(self):
-        config = {"sources_enabled": []}
+        config = {"sources_enabled": [], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "outbound" in result
 
-    def test_inbound_dms_always_included(self):
-        config = {"sources_enabled": ["teams"]}
+    def test_all_received_always_included(self):
+        config = {"sources_enabled": ["teams"], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
-        assert "inbound_dms" in result
+        assert "all_received" in result
 
-    def test_inbound_dms_included_with_empty_sources(self):
-        config = {"sources_enabled": []}
+    def test_all_received_included_with_empty_sources(self):
+        config = {"sources_enabled": [], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
-        assert "inbound_dms" in result
+        assert "all_received" in result
+
+    def test_key_contacts_always_included(self):
+        config = {"sources_enabled": ["teams"], "query_strategy": "single_phase"}
+        result = build_all_queries("March 01, 2026", config)
+        assert "key_contacts" in result
+
+    def test_key_contacts_populated_from_config(self):
+        config = {"sources_enabled": ["teams"], "key_contacts": ["Alice", "Bob"],
+                  "query_strategy": "single_phase"}
+        result = build_all_queries("March 01, 2026", config)
+        assert len(result["key_contacts"]) == 2
+        assert "Alice" in result["key_contacts"]
 
     def test_doc_mentions_always_included(self):
-        config = {"sources_enabled": ["teams"]}
+        config = {"sources_enabled": ["teams"], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "doc_mentions" in result
         assert "email_notifications" in result["doc_mentions"]
         assert "direct_search" in result["doc_mentions"]
 
     def test_doc_mentions_included_with_empty_sources(self):
-        config = {"sources_enabled": []}
+        config = {"sources_enabled": [], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "doc_mentions" in result
 
     def test_transcript_queries_included_when_calendar_enabled(self):
-        config = {"sources_enabled": ["calendar"]}
+        config = {"sources_enabled": ["calendar"], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "transcript_discovery" in result["calendar"]
         assert "transcript_extraction" in result["calendar"]
 
     def test_transcript_queries_excluded_when_calendar_not_enabled(self):
-        config = {"sources_enabled": ["teams"]}
+        config = {"sources_enabled": ["teams"], "query_strategy": "single_phase"}
         result = build_all_queries("March 01, 2026", config)
         assert "calendar" not in result
 
@@ -377,6 +444,155 @@ class TestBuildDocMentionsQueries:
         assert "February 28, 2026" in result["direct_search"]
 
 
+# ---------------------------------------------------------------------------
+# New 2-Phase Query Tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuildDiscoveryQueries:
+    def test_returns_all_enabled_sources(self):
+        config = {"sources_enabled": ["teams", "email", "calendar"]}
+        result = build_discovery_queries("March 01, 2026", config)
+        assert "chats" in result
+        assert "email" in result
+        assert "sent_items" in result
+        assert "calendar" in result
+
+    def test_chats_discovery_no_message_content(self):
+        config = {"sources_enabled": ["teams"]}
+        result = build_discovery_queries("March 01, 2026", config)
+        q = result["chats"].lower()
+        assert "do not show message content" in q
+
+    def test_email_discovery_excludes_body(self):
+        config = {"sources_enabled": ["email"]}
+        result = build_discovery_queries("March 01, 2026", config)
+        q = result["email"].lower()
+        assert "do not include body" in q
+
+    def test_sent_items_included_when_email_or_calendar(self):
+        for source in ["email", "calendar"]:
+            config = {"sources_enabled": [source]}
+            result = build_discovery_queries("March 01, 2026", config)
+            assert "sent_items" in result
+
+    def test_uses_config_templates(self):
+        config = {
+            "sources_enabled": ["teams"],
+            "chats_discovery_query_template": "Custom chats since {since_date}",
+        }
+        result = build_discovery_queries("March 01, 2026", config)
+        assert result["chats"] == "Custom chats since March 01, 2026"
+
+    def test_empty_sources_still_has_chats(self):
+        config = {"sources_enabled": []}
+        result = build_discovery_queries("March 01, 2026", config)
+        assert "chats" in result
+        assert "email" not in result
+
+
+class TestBuildDetailQueries:
+    def test_chats_one_query_per_item(self):
+        items = [
+            {"chat_type": "1:1", "chat_name": "Jordan Kim"},
+            {"chat_type": "group", "chat_name": "API Review"},
+            {"chat_type": "channel", "chat_name": "General"},
+        ]
+        queries = build_detail_queries("chats", items, "March 01, 2026")
+        assert len(queries) == 3
+
+    def test_email_one_query_per_item(self):
+        items = [
+            {"sender": "Alice", "subject": "Budget proposal"},
+            {"sender": "Bob", "subject": "Design review"},
+        ]
+        queries = build_detail_queries("email", items, "March 01, 2026")
+        assert len(queries) == 2
+
+    def test_sent_items_includes_reply_check(self):
+        items = [
+            {"recipient": "Alice", "subject": "Question", "date": "March 05"},
+        ]
+        queries = build_detail_queries("sent_items", items, "March 01, 2026")
+        assert len(queries) == 1
+        assert "replies" in queries[0].lower() or "reply" in queries[0].lower()
+
+    def test_unknown_source_returns_empty(self):
+        queries = build_detail_queries("foo", [{"a": 1}], "March 01, 2026")
+        assert queries == []
+
+    def test_empty_items_returns_empty(self):
+        queries = build_detail_queries("chats", [], "March 01, 2026")
+        assert queries == []
+
+    def test_max_limit_applied(self):
+        items = [{"chat_type": "1:1", "chat_name": f"Person {i}"} for i in range(10)]
+        config = {"max_detail_queries_per_source": 3}
+        queries = build_detail_queries("chats", items, "March 01, 2026", config)
+        assert len(queries) == 3
+
+
+class TestBuildAllQueriesV3:
+    """Tests for 2-phase (default) query structure."""
+
+    def test_has_phase1_key(self):
+        config = {"sources_enabled": ["teams", "email", "calendar"]}
+        result = build_all_queries("March 01, 2026", config)
+        assert "phase1" in result
+
+    def test_phase1_has_all_sources(self):
+        config = {"sources_enabled": ["teams", "email", "calendar"]}
+        result = build_all_queries("March 01, 2026", config)
+        assert "chats" in result["phase1"]
+        assert "email" in result["phase1"]
+        assert "sent_items" in result["phase1"]
+        assert "calendar" in result["phase1"]
+
+    def test_has_validation_key(self):
+        config = {"sources_enabled": ["teams"]}
+        result = build_all_queries("March 01, 2026", config)
+        assert "validation" in result
+
+    def test_legacy_mode(self):
+        config = {"sources_enabled": ["teams"], "query_strategy": "single_phase"}
+        result = build_all_queries("March 01, 2026", config)
+        assert "phase1" not in result
+        assert "teams" in result
+
+    def test_transcript_queries_present(self):
+        config = {"sources_enabled": ["calendar"]}
+        result = build_all_queries("March 01, 2026", config)
+        assert "transcript_discovery" in result
+        assert "transcript_extraction" in result
+
+    def test_doc_mentions_present(self):
+        config = {"sources_enabled": ["teams"]}
+        result = build_all_queries("March 01, 2026", config)
+        assert "doc_mentions" in result
+
+    def test_no_key_contacts_at_top_level(self):
+        """key_contacts removed in 2-phase — replaced by Phase 1 chat discovery."""
+        config = {"sources_enabled": ["teams"], "key_contacts": ["Alice"]}
+        result = build_all_queries("March 01, 2026", config)
+        assert "key_contacts" not in result
+
+
+class TestBuildValidationQuery:
+    def test_returns_string_with_date(self):
+        query = build_validation_query("March 01, 2026")
+        assert isinstance(query, str)
+        assert "March 01, 2026" in query
+
+    def test_uses_config_template(self):
+        config = {"validation_query_template": "My tasks since {since_date}"}
+        query = build_validation_query("March 01, 2026", config)
+        assert query == "My tasks since March 01, 2026"
+
+    def test_default_mentions_commitments(self):
+        query = build_validation_query("March 01, 2026")
+        assert "commitment" in query.lower()
+
+
 class TestMergeDuplicates:
     def _make_dup_task(self, task_id, title, thread_id="", meeting_title="",
                        state="open", created=None):
@@ -412,11 +628,13 @@ class TestMergeDuplicates:
         assert kept_id == "TASK-002"  # newest
         assert "TASK-001" in merged_ids
 
-    def test_different_thread_not_merged(self):
+    def test_different_thread_different_sender_not_merged(self):
         t1 = self._make_dup_task("TASK-001", "Follow up on API schema mapping",
                                  thread_id="19:abc")
+        t1["sender"] = "Alice"
         t2 = self._make_dup_task("TASK-002", "Follow up on API schema mapping",
                                  thread_id="19:def")
+        t2["sender"] = "Bob"
         tasks = [t1, t2]
         result = merge_duplicates(tasks)
         assert len(result) == 0
@@ -454,3 +672,25 @@ class TestMergeDuplicates:
         assert len(result) == 0
         assert t1["state"] == "open"
         assert t2["state"] == "open"
+
+    def test_merge_duplicates_sender_grouping(self):
+        """Two tasks from the same sender with near-identical titles but different thread_ids should merge."""
+        t1 = _make_task(task_id="TASK-S1", sender="Jordan Kim",
+                        title="Follow up on API schema mapping",
+                        source="teams")
+        t1["thread_id"] = "19:thread-aaa"
+        t1["created"] = "2026-03-08T10:00:00"
+        t1["updated"] = "2026-03-08T10:00:00"
+        t2 = _make_task(task_id="TASK-S2", sender="Jordan Kim",
+                        title="Follow up on API schema mapping review",
+                        source="email")
+        t2["thread_id"] = "19:thread-bbb"
+        t2["created"] = "2026-03-09T10:00:00"
+        t2["updated"] = "2026-03-09T10:00:00"
+        tasks = [t1, t2]
+        result = merge_duplicates(tasks)
+        assert len(result) == 1
+        kept_id, merged_ids = result[0]
+        assert kept_id == "TASK-S2"  # newer task kept
+        assert "TASK-S1" in merged_ids
+        assert t1["state"] == "closed"

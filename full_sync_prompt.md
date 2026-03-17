@@ -19,4 +19,10 @@ Track `run_stats["source_counts"]` — record item counts per source after extra
 
 Be thorough with transcript extraction — transcripts are the richest source. Extract BOTH directions (inbound + outbound). Mark items as `already_done: True` if sent_items show they're handled.
 
+Every item MUST include `extra.source_context` — a short human-readable breadcrumb so users can find the original message:
+- **Teams chat**: chat name or participant list, e.g. `"Chat: Arjun, Claire, Shiva"`
+- **Email**: subject line, e.g. `"Email: Re: Voice Notes launch plan"`
+- **Calendar/transcript**: meeting title, e.g. `"Meeting: Voice Notes Team Sync"`
+- **Flagged email**: subject, e.g. `"Flagged: Privacy Fundamentals evaluation"`
+
 CRITICAL: Raw content first, WorkIQ interpretation second. Every task must trace to explicit words in a message, not a WorkIQ narrative.

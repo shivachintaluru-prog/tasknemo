@@ -269,10 +269,16 @@ class TestTransitionTask:
         assert transition_task(task, "closed", "test") is True
         assert task["state"] == "closed"
 
-    def test_closed_is_terminal(self):
+    def test_closed_can_reopen(self):
         task = _make_task(state="open")
         transition_task(task, "closed", "test")
-        assert transition_task(task, "open", "reopen") is False
+        assert transition_task(task, "open", "reopen") is True
+        assert task["state"] == "open"
+
+    def test_closed_cannot_skip_to_waiting(self):
+        task = _make_task(state="open")
+        transition_task(task, "closed", "test")
+        assert transition_task(task, "waiting", "nope") is False
         assert task["state"] == "closed"
 
     def test_transition_records_history(self):

@@ -464,11 +464,11 @@ class TestBuildDiscoveryQueries:
         q = result["chats"].lower()
         assert "do not show message content" in q
 
-    def test_email_discovery_excludes_body(self):
+    def test_email_discovery_includes_all(self):
         config = {"sources_enabled": ["email"]}
         result = build_discovery_queries("March 01, 2026", config)
         q = result["email"].lower()
-        assert "do not include body" in q
+        assert "include all emails" in q
 
     def test_sent_items_included_when_email_or_calendar(self):
         for source in ["email", "calendar"]:

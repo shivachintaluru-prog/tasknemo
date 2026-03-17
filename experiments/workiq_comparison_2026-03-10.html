@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WorkIQ Experiment: Direct Interpretation vs Raw + Claude Extract</title>
+<style>
+  :root {
+    --blue: #0078d4;
+    --blue-light: #deecf9;
+    --green: #107c10;
+    --green-light: #dff6dd;
+    --red: #d13438;
+    --red-light: #fde7e9;
+    --orange: #ca5010;
+    --orange-light: #fff4ce;
+    --gray-50: #fafafa;
+    --gray-100: #f5f5f5;
+    --gray-200: #e8e8e8;
+    --gray-600: #605e5c;
+    --gray-800: #323130;
+    --gray-900: #201f1e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--gray-900);
+    line-height: 1.6;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px;
+    background: #fff;
+  }
+  h1 { font-size: 28px; font-weight: 600; margin-bottom: 4px; }
+  h2 { font-size: 22px; font-weight: 600; margin: 48px 0 16px; border-bottom: 2px solid var(--blue); padding-bottom: 8px; }
+  h3 { font-size: 17px; font-weight: 600; margin: 28px 0 12px; color: var(--gray-800); }
+  p { margin-bottom: 12px; }
+  .subtitle { color: var(--gray-600); font-size: 15px; margin-bottom: 32px; }
+  .subtitle span { margin-right: 20px; }
+
+  /* Hero stats */
+  .hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 32px 0; }
+  .hero-card {
+    border-radius: 8px; padding: 24px; text-align: center;
+    border: 1px solid var(--gray-200);
+  }
+  .hero-card.winner { background: var(--green-light); border-color: var(--green); }
+  .hero-card.loser { background: var(--red-light); border-color: var(--red); }
+  .hero-card.neutral { background: var(--gray-100); border-color: var(--gray-200); }
+  .hero-number { font-size: 42px; font-weight: 700; line-height: 1.1; }
+  .hero-number.green { color: var(--green); }
+  .hero-number.red { color: var(--red); }
+  .hero-number.gray { color: var(--gray-600); }
+  .hero-label { font-size: 13px; color: var(--gray-600); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  /* TLDR box */
+  .tldr {
+    background: var(--blue-light); border-left: 4px solid var(--blue);
+    padding: 20px 24px; border-radius: 0 8px 8px 0; margin: 24px 0;
+  }
+  .tldr strong { color: var(--blue); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 14px; }
+  th {
+    background: var(--gray-100); text-align: left; padding: 10px 12px;
+    font-weight: 600; font-size: 13px; text-transform: uppercase;
+    letter-spacing: 0.3px; color: var(--gray-600); border-bottom: 2px solid var(--gray-200);
+  }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--gray-200); vertical-align: top; }
+  tr:hover td { background: var(--gray-50); }
+  .mono { font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 13px; }
+
+  /* Score badges */
+  .score { display: inline-block; width: 28px; height: 28px; line-height: 28px; text-align: center; border-radius: 50%; font-weight: 600; font-size: 13px; }
+  .score-2 { background: var(--green-light); color: var(--green); }
+  .score-1 { background: var(--orange-light); color: var(--orange); }
+  .score-0 { background: var(--red-light); color: var(--red); }
+
+  /* Tag badges */
+  .tag { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .tag-inbound { background: var(--blue-light); color: var(--blue); }
+  .tag-outbound { background: var(--orange-light); color: var(--orange); }
+  .tag-self { background: #e8daef; color: #6c3483; }
+  .tag-done { background: var(--green-light); color: var(--green); }
+  .tag-miss { background: var(--red-light); color: var(--red); font-size: 11px; }
+  .tag-hit { background: var(--green-light); color: var(--green); font-size: 11px; }
+
+  /* Comparison bar chart */
+  .bar-row { display: flex; align-items: center; margin: 8px 0; }
+  .bar-label { width: 160px; font-size: 14px; font-weight: 500; flex-shrink: 0; }
+  .bar-track { flex: 1; height: 28px; background: var(--gray-100); border-radius: 4px; position: relative; overflow: hidden; display: flex; }
+  .bar-a { background: var(--red); opacity: 0.75; height: 100%; transition: width 0.5s; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 600; }
+  .bar-b { background: var(--green); opacity: 0.85; height: 100%; transition: width 0.5s; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 600; }
+  .bar-legend { display: flex; gap: 20px; margin: 4px 0 20px 160px; font-size: 12px; color: var(--gray-600); }
+  .bar-legend span::before { content: ''; display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .bar-legend .leg-a::before { background: var(--red); opacity: 0.75; }
+  .bar-legend .leg-b::before { background: var(--green); opacity: 0.85; }
+
+  /* Observation cards */
+  .obs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+  .obs-card {
+    border: 1px solid var(--gray-200); border-radius: 8px; padding: 16px 20px;
+    background: var(--gray-50);
+  }
+  .obs-card h4 { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+  .obs-card p { font-size: 13px; color: var(--gray-800); margin: 0; }
+  .obs-card.highlight { border-color: var(--blue); background: var(--blue-light); }
+
+  /* Verdict */
+  .verdict {
+    background: linear-gradient(135deg, #0078d4 0%, #005a9e 100%);
+    color: #fff; border-radius: 12px; padding: 32px; margin: 32px 0; text-align: center;
+  }
+  .verdict h3 { color: #fff; margin: 0 0 12px; font-size: 20px; }
+  .verdict p { color: rgba(255,255,255,0.9); margin: 0; font-size: 15px; }
+
+  /* Method diagram */
+  .method-grid { display: grid; grid-template-columns: 1fr 40px 1fr; gap: 0; margin: 24px 0; align-items: start; }
+  .method-card {
+    border: 2px solid var(--gray-200); border-radius: 12px; padding: 20px;
+  }
+  .method-card h4 { font-size: 15px; margin-bottom: 12px; }
+  .method-card.a { border-color: var(--red); }
+  .method-card.b { border-color: var(--green); }
+  .method-vs { display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; color: var(--gray-600); }
+  .method-step { display: flex; align-items: flex-start; margin: 6px 0; font-size: 13px; }
+  .method-step .num {
+    width: 22px; height: 22px; line-height: 22px; border-radius: 50%;
+    background: var(--gray-200); text-align: center; font-size: 11px;
+    font-weight: 600; margin-right: 8px; flex-shrink: 0;
+  }
+  .method-card.a .num { background: var(--red-light); color: var(--red); }
+  .method-card.b .num { background: var(--green-light); color: var(--green); }
+
+  /* Footer */
+  .footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--gray-200); font-size: 12px; color: var(--gray-600); text-align: center; }
+
+  /* Print */
+  @media print {
+    body { max-width: 100%; padding: 20px; }
+    .hero-card, .obs-card, .method-card { break-inside: avoid; }
+    h2 { break-after: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>WorkIQ Experiment: Direct Interpretation vs Raw + Claude Extract</h1>
+<div class="subtitle">
+  <span>March 10, 2026</span>
+  <span>Window: 48 hours (Mar 9&ndash;10)</span>
+  <span>TaskNemo / Shiva Chintaluru</span>
+</div>
+
+<div class="tldr">
+  <strong>TL;DR</strong> &mdash; We ran both approaches against the same 48-hour window of real M365 data. Letting WorkIQ interpret (Approach A) found <strong>67%</strong> of tasks. Pulling raw data and having Claude reason over it (Approach B) found <strong>100%</strong>. Neither hallucinated. The biggest risk isn't fabrication &mdash; it's <strong>silent omission</strong>.
+</div>
+
+<!-- Hero Stats -->
+<div class="hero">
+  <div class="hero-card loser">
+    <div class="hero-number red">67%</div>
+    <div class="hero-label">A: Direct Coverage</div>
+  </div>
+  <div class="hero-card winner">
+    <div class="hero-number green">100%</div>
+    <div class="hero-label">B: Raw + Extract Coverage</div>
+  </div>
+  <div class="hero-card neutral">
+    <div class="hero-number gray">0 / 0</div>
+    <div class="hero-label">Hallucinations (A / B)</div>
+  </div>
+</div>
+
+<!-- Method -->
+<h2>Experiment Design</h2>
+<p>Both approaches queried the same WorkIQ MCP endpoint over the same time window. Approach A ran first to prevent contamination from raw data exposure.</p>
+
+<div class="method-grid">
+  <div class="method-card a">
+    <h4 style="color:var(--red)">A: Direct / Interpretive</h4>
+    <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px">Ask WorkIQ high-level questions, let it interpret</p>
+    <div class="method-step"><div class="num">1</div><div>"What are my top action items from the last 48h?"</div></div>
+    <div class="method-step"><div class="num">2</div><div>"What commitments did I make in meetings?"</div></div>
+    <div class="method-step"><div class="num">3</div><div>"What unreplied items need my attention?"</div></div>
+    <p style="font-size:12px;color:var(--gray-600);margin-top:12px"><strong>3 queries total</strong> &mdash; WorkIQ reasons over the data</p>
+  </div>
+  <div class="method-vs">vs</div>
+  <div class="method-card b">
+    <h4 style="color:var(--green)">B: Raw + Claude Extract</h4>
+    <p style="font-size:13px;color:var(--gray-600);margin-bottom:12px">Pull raw data via WorkIQ, Claude extracts tasks</p>
+    <div class="method-step"><div class="num">1</div><div>Sent items (completion baseline)</div></div>
+    <div class="method-step"><div class="num">2</div><div>All Teams conversations</div></div>
+    <div class="method-step"><div class="num">3</div><div>All emails</div></div>
+    <div class="method-step"><div class="num">4</div><div>All calendar events</div></div>
+    <div class="method-step"><div class="num">5</div><div>Transcript discovery</div></div>
+    <div class="method-step"><div class="num">6</div><div>Transcript action item extraction</div></div>
+    <div class="method-step"><div class="num">7</div><div>Outbound unreplied</div></div>
+    <div class="method-step"><div class="num">8</div><div>Inbound unreplied DMs</div></div>
+    <div class="method-step"><div class="num">9</div><div>Doc mentions (email)</div></div>
+    <div class="method-step"><div class="num">10</div><div>Doc mentions (direct)</div></div>
+    <p style="font-size:12px;color:var(--gray-600);margin-top:12px"><strong>10 queries total</strong> &mdash; Claude reasons over the data</p>
+  </div>
+</div>
+
+<!-- Ground Truth -->
+<h2>Ground Truth: 21 Real Tasks</h2>
+<p>Established from Approach B's raw data. Every task traces to explicit words in a source message or transcript.</p>
+
+<table>
+  <thead>
+    <tr><th>#</th><th>Owner / Sender</th><th>Task</th><th>Type</th><th>A Found?</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>Hao Zhang</td><td>Request Claire to provide RT Voice summary for exec review doc</td><td><span class="tag tag-inbound">inbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>2</td><td>Eva Keyes</td><td>Decide: remove first survey question for MSFT employees?</td><td><span class="tag tag-inbound">inbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>3</td><td>Ajay Challagalla</td><td>Provide CarPlay & RT Vision demo assets + timelines (urgent)</td><td><span class="tag tag-inbound">inbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>4</td><td>Mohit Anand</td><td>Clarify Android demo capability and Shortcuts status</td><td><span class="tag tag-inbound">inbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>5</td><td>Arjun Patel</td><td>Decide official artifact name for Voice Notes</td><td><span class="tag tag-inbound">inbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>6</td><td>Shiva (self)</td><td>Remove web support item from hack demo list</td><td><span class="tag tag-self">self-commit</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>7</td><td>Shiva (self)</td><td>Set up usability sessions with ~6 users</td><td><span class="tag tag-self">self-commit</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>8</td><td>Shiva (self)</td><td>Sync with Bharath &mdash; communicate ETA by end of week</td><td><span class="tag tag-self">self-commit</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr style="background:#fff8f8"><td>9</td><td>Shiva (self)</td><td>Start a central repository for skills and demos</td><td><span class="tag tag-self">self-commit</span></td><td><span class="tag tag-miss">Missed</span></td></tr>
+    <tr style="background:#fff8f8"><td>10</td><td>Shiva (self)</td><td>Keep recurring AI-first PM demo sessions running</td><td><span class="tag tag-self">self-commit</span></td><td><span class="tag tag-miss">Missed</span></td></tr>
+    <tr><td>11</td><td>Silky Gambhir</td><td>Share video of Voice Notes + add to Sydney chat</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>12</td><td>Rajan Singh</td><td>Start batch transcription workflow conversations</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>13</td><td>Ghanim Khan</td><td>Share UI POC video</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>14</td><td>Arjun Patel</td><td>Prepare prototype; collate entry points; email OCM</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>15</td><td>Pankesh Kumar</td><td>Provide ETA; sync Lokesh; close approach by Wed</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr><td>16</td><td>Sakshi Kulkarni</td><td>Set up focused meeting at 1:30 PM</td><td><span class="tag tag-done">completed</span></td><td><span class="tag tag-hit">Yes</span></td></tr>
+    <tr style="background:#fff8f8"><td>17</td><td>Arjun Patel</td><td>Consolidate transcript Figma screens into main UX flow</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-miss">Missed</span></td></tr>
+    <tr style="background:#fff8f8"><td>18</td><td>Arjun Patel</td><td>Create iPad-specific designs for Voice Notes</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-miss">Missed</span></td></tr>
+    <tr style="background:#fff8f8"><td>19</td><td>Pankesh Kumar</td><td>Estimate effort for rebuilding previewer outside Voice SDK</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-miss">Missed</span></td></tr>
+    <tr style="background:#fff8f8"><td>20</td><td>Mohit Anand</td><td>Forward WorkIQ + PM Studio emails to PM alias</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-miss">Missed</span></td></tr>
+    <tr style="background:#fff8f8"><td>21</td><td>Shiva &rarr; Praveen</td><td>Voice Notes alignment question &mdash; awaiting reply</td><td><span class="tag tag-outbound">outbound</span></td><td><span class="tag tag-miss">Missed</span></td></tr>
+  </tbody>
+</table>
+<p style="font-size:13px;color:var(--gray-600)"><strong>Approach A missed 7 tasks</strong> (highlighted in red). All 7 came from sources A never queried: UI Discussion transcript, AI First PM Forum transcript, and outbound message tracking.</p>
+
+<!-- Comparison Chart -->
+<h2>Head-to-Head Comparison</h2>
+
+<div class="bar-legend"><span class="leg-a">Approach A (Direct)</span> <span class="leg-b">Approach B (Raw + Extract)</span></div>
+
+<div class="bar-row">
+  <div class="bar-label">GT Coverage</div>
+  <div class="bar-track">
+    <div class="bar-a" style="width:33.5%">67%</div>
+    <div class="bar-b" style="width:50%">100%</div>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label">Avg Accuracy</div>
+  <div class="bar-track">
+    <div class="bar-a" style="width:50%">2.0</div>
+    <div class="bar-b" style="width:50%">2.0</div>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label">Avg Specificity</div>
+  <div class="bar-track">
+    <div class="bar-a" style="width:46.5%">1.86</div>
+    <div class="bar-b" style="width:46.5%">1.86</div>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label">Avg Traceability</div>
+  <div class="bar-track">
+    <div class="bar-a" style="width:50%">2.0</div>
+    <div class="bar-b" style="width:31%">1.24</div>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label">Hallucinations</div>
+  <div class="bar-track">
+    <div class="bar-a" style="width:2%;min-width:24px">0</div>
+    <div class="bar-b" style="width:2%;min-width:24px">0</div>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label">Meetings Analyzed</div>
+  <div class="bar-track">
+    <div class="bar-a" style="width:12.5%">1</div>
+    <div class="bar-b" style="width:50%">4</div>
+  </div>
+</div>
+<div class="bar-row">
+  <div class="bar-label">MCP Queries</div>
+  <div class="bar-track">
+    <div class="bar-a" style="width:15%">3</div>
+    <div class="bar-b" style="width:50%">10</div>
+  </div>
+</div>
+
+<h3>Full Comparison Table</h3>
+<table>
+  <thead>
+    <tr><th>Metric</th><th>A (Direct)</th><th>B (Raw + Extract)</th><th>Delta</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Tasks found</td><td>14</td><td><strong>21</strong></td><td style="color:var(--green)">+7</td></tr>
+    <tr><td>GT coverage</td><td>66.7%</td><td><strong>100%</strong></td><td style="color:var(--green)">+33.3pp</td></tr>
+    <tr><td>Hallucinated tasks</td><td>0</td><td>0</td><td>0</td></tr>
+    <tr><td>Avg accuracy (0&ndash;2)</td><td>2.00</td><td>2.00</td><td>0</td></tr>
+    <tr><td>Avg specificity (0&ndash;2)</td><td>1.86</td><td>1.86</td><td>0</td></tr>
+    <tr><td>Avg traceability (0&ndash;2)</td><td><strong>2.00</strong></td><td>1.24</td><td style="color:var(--red)">&minus;0.76</td></tr>
+    <tr><td>Completeness score (0&ndash;2)</td><td>0</td><td><strong>2</strong></td><td style="color:var(--green)">+2</td></tr>
+    <tr><td>MCP queries used</td><td>3</td><td>10</td><td>+7</td></tr>
+    <tr><td>Queries returning data</td><td>2</td><td>8</td><td>+6</td></tr>
+    <tr><td>Completion detection</td><td>No</td><td><strong>Yes</strong></td><td>&mdash;</td></tr>
+    <tr><td>Meetings analyzed</td><td>1</td><td><strong>4</strong></td><td>+3</td></tr>
+  </tbody>
+</table>
+
+<!-- Why A Missed -->
+<h2>Why Approach A Missed 7 Tasks</h2>
+
+<div class="obs-grid">
+  <div class="obs-card highlight">
+    <h4>The "Spotlight" Problem</h4>
+    <p>A's meeting query analyzed <strong>1 of 4</strong> transcribed meetings (Voice notes team sync). It completely skipped UI Discussion, AI First PM Forum, and Copilot Insight Engine Office Hour &mdash; dropping 6 tasks silently.</p>
+  </div>
+  <div class="obs-card">
+    <h4>No Outbound Tracking</h4>
+    <p>A's unreplied-items query only caught <em>inbound</em> messages. It had no mechanism to find "things I sent that got no reply" &mdash; missing the Praveen Sinha follow-up entirely.</p>
+  </div>
+  <div class="obs-card">
+    <h4>Wasted Query Slot</h4>
+    <p>A1 (broad sweep: "What are my top action items?") returned <strong>zero data</strong>. 33% of A's query budget produced nothing. B had 2 empty queries too (doc mentions), but 8 others compensated.</p>
+  </div>
+  <div class="obs-card">
+    <h4>No Completion Detection</h4>
+    <p>A presented the Ajay demo request and Mohit rollout dates as fully open. B's sent-items-first approach detected these were <strong>already partially addressed</strong>, reducing false-positive noise.</p>
+  </div>
+</div>
+
+<!-- Key Observations -->
+<h2>Key Observations</h2>
+
+<div class="obs-grid">
+  <div class="obs-card">
+    <h4>1. No Hallucinations in Either Approach</h4>
+    <p>Contrary to prior incidents (e.g., fabricated "Juhee All Hands speaker slot"), WorkIQ did not hallucinate in this window. The problem is <strong>omission, not fabrication</strong>. WorkIQ may have improved its grounding, or hallucination risk is context-dependent.</p>
+  </div>
+  <div class="obs-card">
+    <h4>2. Accuracy Parity When Found</h4>
+    <p>Both approaches scored identically on accuracy (2.0) and specificity (1.86) for tasks they <em>did</em> find. WorkIQ's interpretive summaries are well-grounded &mdash; the quality gap is purely about <strong>coverage breadth</strong>.</p>
+  </div>
+  <div class="obs-card">
+    <h4>3. B's Traceability Gap Is Cosmetic</h4>
+    <p>B scored lower on traceability (1.24 vs 2.00) because transcript items link to meeting recordings, not message permalinks. In practice, both approaches point to the same meeting &mdash; the difference is presentation, not substance.</p>
+  </div>
+  <div class="obs-card">
+    <h4>4. Cost-Quality Tradeoff Is Favorable</h4>
+    <p>B uses 3.3x more queries for 1.5x more tasks + completion detection. The marginal cost (~7 extra API calls, ~30s) is negligible vs. the value of catching 7 additional real tasks.</p>
+  </div>
+</div>
+
+<!-- Scoring Rubric -->
+<h2>Scoring Methodology</h2>
+<p>Each task scored 0&ndash;2 on four dimensions. Completeness scored at the approach level.</p>
+<table>
+  <thead>
+    <tr><th>Criterion</th><th><span class="score score-0">0</span></th><th><span class="score score-1">1</span></th><th><span class="score score-2">2</span></th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Accuracy</strong></td><td>Fabricated / no real message</td><td>Real but mischaracterized</td><td>Accurately reflects source</td></tr>
+    <tr><td><strong>Hallucination</strong></td><td>Invented context</td><td>Minor embellishment</td><td>Strictly traceable to explicit words</td></tr>
+    <tr><td><strong>Specificity</strong></td><td>Vague ("follow up")</td><td>Partially specific</td><td>Fully actionable with details</td></tr>
+    <tr><td><strong>Traceability</strong></td><td>No source link</td><td>Source type but no link</td><td>Specific link to message/event</td></tr>
+    <tr><td><strong>Completeness</strong></td><td>&gt;30% of GT missing</td><td>10&ndash;30% missing</td><td>&gt;90% captured</td></tr>
+  </tbody>
+</table>
+
+<!-- Verdict -->
+<div class="verdict">
+  <h3>Verdict: Raw + Extract Is the Right Architecture</h3>
+  <p>Approach B found 100% of ground truth tasks vs. A's 67%. The key insight: interpretive queries <strong>silently drop coverage</strong> &mdash; analyzing 1 of 4 transcripts, missing outbound tracking, and returning empty on broad questions. TaskNemo's design choice to pull raw data and reason locally is validated.</p>
+</div>
+
+<h3>Recommendations</h3>
+<table>
+  <thead><tr><th>Decision</th><th>Rationale</th></tr></thead>
+  <tbody>
+    <tr><td><strong>Continue with Approach B</strong> as primary pipeline</td><td>33% more coverage, completion detection, no hallucination penalty</td></tr>
+    <tr><td>Consider A-style queries for <strong>"quick check" mode</strong> only</td><td>Accurate for what it finds, good traceability, but unreliable coverage</td></tr>
+    <tr><td>Monitor hallucination risk over time</td><td>Neither approach hallucinated here, but prior incidents suggest it's context-dependent</td></tr>
+    <tr><td>Investigate improving B's traceability</td><td>Transcript items could link to specific timestamps if WorkIQ exposes them</td></tr>
+  </tbody>
+</table>
+
+<div class="footer">
+  <p>Generated by TaskNemo &middot; Experiment run March 10, 2026 &middot; Data window: Mar 9&ndash;10, 2026</p>
+  <p>Raw data and detailed scoring: <code>experiments/workiq_comparison_2026-03-10.md</code></p>
+</div>
+
+</body>
+</html>

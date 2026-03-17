@@ -273,12 +273,12 @@ class TestComputeFocusPriority:
 
 
 class TestRenderTaskItemV2:
-    def test_score_priority_conf_line(self):
+    def test_score_age_idle_line(self):
         task = _make_task(score=82)
         result = _render_task_item_v2(task)
         assert "Score: 82" in result
-        assert "Priority:" in result
-        assert "Conf:" in result
+        assert "Age:" in result
+        assert "Idle:" in result
 
     def test_due_age_idle_line(self):
         task = _make_task(due_hint="eod today")

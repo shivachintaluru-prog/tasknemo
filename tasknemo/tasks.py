@@ -4,6 +4,7 @@ from datetime import datetime
 
 from .store import load_tasks, save_tasks, load_config, save_config
 from .grouping import extract_thread_id
+from .dedup import compute_dedup_hash
 
 
 def next_task_id(config, store=None):
@@ -70,9 +71,21 @@ def add_task(task_dict, config):
     task_dict.setdefault("created", datetime.now().isoformat())
     task_dict.setdefault("updated", datetime.now().isoformat())
     task_dict.setdefault("source", "teams")
+    # Map the extraction "link" field to the appropriate link field
+    if task_dict.get("link") and not task_dict.get("source_link"):
+        if task_dict.get("source") in ("teams", "all_received", "key_contacts"):
+            task_dict.setdefault("teams_link", task_dict["link"])
+        else:
+            task_dict["source_link"] = task_dict["link"]
     task_dict.setdefault("source_link", "")
     task_dict.setdefault("source_metadata", {})
     task_dict.setdefault("direction", "inbound")
+    # Compute dedup_hash if not already present
+    if not task_dict.get("dedup_hash"):
+        extracted_date = extra.get("extracted_date", task_dict.get("created", "")[:10])
+        task_dict["dedup_hash"] = compute_dedup_hash(
+            task_dict.get("sender", ""), task_dict.get("title", ""), extracted_date
+        )
     task_dict.setdefault("parent_id", None)
     task_dict.setdefault("subtask_ids", [])
     task_dict.setdefault("thread_id", extract_thread_id(task_dict.get("teams_link", "")))

@@ -439,6 +439,13 @@ def cmd_init(force=False, vault_path=None):
             "full_sync_threshold_hours": 8,
         }
     config["vault_path"] = vault_path
+    sync_freq = input("How often should full sync run? Hours between syncs [8]: ").strip()
+    if sync_freq:
+        try:
+            config["full_sync_threshold_hours"] = int(sync_freq)
+        except ValueError:
+            print(f"  Invalid number '{sync_freq}', using default 8 hours.")
+            config["full_sync_threshold_hours"] = 8
     save_json(CONFIG_PATH, config)
     if not os.path.exists(TASKS_PATH) or force:
         save_json(TASKS_PATH, {"tasks": []})

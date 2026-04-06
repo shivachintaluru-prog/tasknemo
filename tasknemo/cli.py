@@ -1,10 +1,9 @@
-"""CLI — all cmd_* functions, main(), inbox sync."""
+"""CLI — all cmd_* functions, main()."""
 
 import json
 import os
 import re
 import sys
-import time
 from datetime import datetime, timedelta
 
 from .store import (
@@ -26,8 +25,7 @@ from .queries import (
     build_discovery_queries, build_validation_query,
 )
 from .rendering import (
-    render_dashboard, write_dashboard, render_alerts, write_alerts,
-    render_sync_log, write_sync_log, sync_dashboard_completions,
+    render_dashboard, render_alerts, render_sync_log,
     _format_age,
 )
 from .notifications import _notify, _build_change_summary
@@ -142,7 +140,7 @@ def cmd_sync_info():
     since = ctx["since_date"]
 
     if pre_closed:
-        print(f"[pre-sync] Closed {len(pre_closed)} tasks marked done in Obsidian: {', '.join(pre_closed)}")
+        print(f"[pre-sync] Closed {len(pre_closed)} tasks marked done: {', '.join(pre_closed)}")
 
     inbox_ids = ctx.get("inbox_ids", [])
     if inbox_ids:
@@ -269,7 +267,7 @@ def cmd_migrate():
     config.setdefault("alerts_filename", "Task Alerts.md")
     config.setdefault("full_sync_threshold_hours", 8)
     config.setdefault("web_port", 8511)
-    config.setdefault("ui_mode", "obsidian")
+    config.setdefault("ui_mode", "web")
 
     if not os.path.exists(ANALYTICS_PATH):
         save_analytics(dict(_ANALYTICS_DEFAULT))
@@ -292,14 +290,6 @@ def cmd_migrate():
             score_task(task, config)
     save_tasks(store)
     print("[migrate] Rescored all active tasks.")
-
-    vault_path = config.get("vault_path", "")
-    if vault_path:
-        md = render_dashboard(store["tasks"], config)
-        path = write_dashboard(md, vault_path, config.get("dashboard_filename", "TaskNemo.md"))
-        print(f"[migrate] Dashboard written to {path}")
-    else:
-        print("[migrate] No vault_path configured; skipping dashboard write.")
 
     print("[migrate] Done.")
 
@@ -390,24 +380,20 @@ def cmd_find(query=None, sender=None, topic=None):
         print(f"{t['id']:10s} {t.get('score', 0):<6d} {t.get('state', ''):16s} {t.get('sender', ''):20s} {t.get('title', '')}")
 
 
-def cmd_init(force=False, vault_path=None):
+def cmd_init(force=False):
     """First-time setup: create data files and config."""
     os.makedirs(DATA_DIR, exist_ok=True)
     if os.path.exists(CONFIG_PATH) and not force:
         print(f"Config already exists: {CONFIG_PATH}")
         print("Use --force to overwrite.")
         return
-    if vault_path is None:
-        vault_path = input("Obsidian vault path [~/Documents/TaskVault]: ").strip()
-        if not vault_path:
-            vault_path = os.path.join(os.path.expanduser("~"), "Documents", "TaskVault")
     template_path = os.path.join(DATA_DIR, "config.template.json")
     if os.path.exists(template_path):
         with open(template_path, "r", encoding="utf-8") as f:
             config = json.load(f)
     else:
         config = {
-            "vault_path": "",
+            "ui_mode": "web",
             "dashboard_filename": "TaskNemo.md",
             "overlap_days": 2,
             "max_followup_queries": 5,
@@ -438,7 +424,6 @@ def cmd_init(force=False, vault_path=None):
             "alerts_filename": "Task Alerts.md",
             "full_sync_threshold_hours": 8,
         }
-    config["vault_path"] = vault_path
     sync_freq = input("How often should full sync run? Hours between syncs [8]: ").strip()
     if sync_freq:
         try:
@@ -452,7 +437,6 @@ def cmd_init(force=False, vault_path=None):
     if not os.path.exists(RUN_LOG_PATH) or force:
         save_json(RUN_LOG_PATH, {"runs": []})
     print(f"Initialized task dashboard in {DATA_DIR}")
-    print(f"  Vault path: {vault_path}")
     print(f"  Config:     {CONFIG_PATH}")
     print(f"  Tasks:      {TASKS_PATH}")
     print(f"  Run log:    {RUN_LOG_PATH}")
@@ -514,141 +498,11 @@ def cmd_upgrade():
     cmd_migrate()
 
 
-_INBOX_INLINE_FLAG_RE = re.compile(r"\s+--(\w+)\s+(.+?)(?=\s+--|$)")
-_INBOX_TASK_RE = re.compile(r"^[-*]\s+\[?\s?\]?\s*(.+)$")
-
-
-def _parse_inbox_tasks(task_lines, config):
-    """Parse task lines and create tasks. Returns list of created task IDs."""
-    created_ids = []
-    for line in task_lines:
-        if not line or line.startswith("#"):
-            continue
-        m = _INBOX_TASK_RE.match(line)
-        if not m:
-            continue
-        raw_title = m.group(1).strip()
-        if not raw_title:
-            continue
-
-        sender = "me"
-        due_hint = None
-        priority = None
-        flags = _INBOX_INLINE_FLAG_RE.findall(raw_title)
-        for flag_name, flag_value in flags:
-            if flag_name == "sender":
-                sender = flag_value.strip()
-            elif flag_name == "due":
-                due_hint = flag_value.strip()
-            elif flag_name == "priority":
-                priority = flag_value.strip()
-        title = _INBOX_INLINE_FLAG_RE.sub("", raw_title).strip()
-        if not title:
-            continue
-
-        task_dict = {
-            "title": title,
-            "sender": sender,
-            "source": "manual",
-            "direction": "inbound",
-            "state_history": [
-                {"state": "open", "reason": "Imported from inbox", "date": datetime.now().isoformat()}
-            ],
-        }
-        if due_hint:
-            task_dict["due_hint"] = due_hint
-        if priority:
-            priority_map = {"high": 20, "medium": 10, "low": 0}
-            task_dict["user_priority"] = priority_map.get(priority.lower(), 0)
-        task_id = add_task(task_dict, config)
-        created_ids.append(task_id)
-    return created_ids
-
-
-def sync_inbox(vault_path, filename="Task Inbox.md"):
-    """Import tasks from the Obsidian inbox file or dashboard inbox section."""
-    path = os.path.join(vault_path, filename)
-    if not os.path.exists(path):
-        return []
-
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-    lines = content.split("\n")
-
-    config = load_config()
-
-    inbox_start = None
-    inbox_end = None
-    for i, line in enumerate(lines):
-        if line.strip() == "## Task Inbox":
-            inbox_start = i
-        elif inbox_start is not None and line.strip().startswith("## ") and i > inbox_start:
-            inbox_end = i
-            break
-        elif inbox_start is not None and line.strip() == "---" and i > inbox_start + 1:
-            inbox_end = i
-            break
-
-    if inbox_start is not None:
-        section_end = inbox_end if inbox_end is not None else len(lines)
-        task_lines = [l.strip() for l in lines[inbox_start + 1:section_end]
-                      if l.strip() and not l.strip().startswith("#")]
-        created_ids = _parse_inbox_tasks(task_lines, config)
-
-        if created_ids:
-            new_section = [
-                "## Task Inbox",
-                "Add tasks below \u2014 they'll be imported on next sync or refresh.",
-                "",
-                "- ",
-            ]
-            new_lines = lines[:inbox_start] + new_section
-            if inbox_end is not None:
-                new_lines += lines[inbox_end:]
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("\n".join(new_lines))
-
-        return created_ids
-
-    header_lines = []
-    task_lines = []
-    in_header = True
-    for line in lines:
-        stripped = line.strip()
-        if in_header and (stripped.startswith("#") or stripped == ""):
-            header_lines.append(line + "\n")
-        else:
-            in_header = False
-            task_lines.append(stripped)
-
-    created_ids = _parse_inbox_tasks(task_lines, config)
-
-    if created_ids:
-        with open(path, "w", encoding="utf-8") as f:
-            f.writelines(header_lines)
-
-    return created_ids
-
 
 def cmd_refresh():
     """Lightweight refresh — no WorkIQ queries needed."""
     config = load_config()
     analytics = load_analytics()
-    vault_path = config.get("vault_path", "")
-    dash_file = config.get("dashboard_filename", "TaskNemo.md")
-    ui_mode = config.get("ui_mode", "obsidian")
-
-    closed_ids = []
-    if vault_path and ui_mode != "web":
-        closed_ids = sync_dashboard_completions(vault_path, dash_file)
-        if closed_ids:
-            print(f"[refresh] Closed from Obsidian: {closed_ids}")
-
-    inbox_ids = []
-    if vault_path and ui_mode != "web":
-        inbox_ids = sync_inbox(vault_path)
-        if inbox_ids:
-            print(f"[refresh] Imported from inbox: {inbox_ids}")
 
     store = load_tasks()
     today = datetime.now().isoformat()
@@ -670,43 +524,19 @@ def cmd_refresh():
 
     score_all_tasks(config, analytics)
 
-    if vault_path and ui_mode != "web":
-        all_tasks = load_tasks()["tasks"]
-        md = render_dashboard(all_tasks, config, analytics=analytics)
-        path = write_dashboard(md, vault_path, dash_file)
-        print(f"[refresh] Dashboard written to {path}")
-
-        if transitions:
-            alerts_file = config.get("alerts_filename", "Task Alerts.md")
-            alerts_md = render_alerts(transitions, [], {}, analytics)
-            write_alerts(alerts_md, vault_path, alerts_file)
-            print(f"[refresh] Alerts written")
-    elif ui_mode != "web":
-        print("[refresh] No vault_path configured; skipping dashboard write.")
-
     run_stats = {
-        "new_tasks": len(inbox_ids),
+        "new_tasks": 0,
         "transitions": len(transitions),
         "merged": 0,
         "skipped": 0,
     }
-    if closed_ids:
-        run_stats["obsidian_closed"] = closed_ids
-    if inbox_ids:
-        run_stats["inbox_imported"] = inbox_ids
     log_run(run_stats)
 
-    if vault_path and ui_mode != "web":
-        run_log = load_run_log()
-        sync_md = render_sync_log(run_log["runs"])
-        write_sync_log(sync_md, vault_path)
-
-    summary = _build_change_summary(len(inbox_ids), len(closed_ids), len(transitions))
+    summary = _build_change_summary(0, 0, len(transitions))
     if summary:
         _notify("TaskNemo", summary)
 
-    changes = len(closed_ids) + len(transitions)
-    if changes == 0:
+    if not transitions:
         print("[refresh] No changes.")
     print("[refresh] Done.")
 
@@ -732,37 +562,6 @@ def cmd_install_tray():
     install_autostart()
 
 
-def cmd_watch():
-    """Poll the dashboard file for changes and auto-refresh on edits."""
-    config = load_config()
-    vault_path = config.get("vault_path", "")
-    dash_file = config.get("dashboard_filename", "TaskNemo.md")
-    if not vault_path:
-        print("[watch] No vault_path configured.")
-        return
-    dashboard_path = os.path.join(vault_path, dash_file)
-    if not os.path.exists(dashboard_path):
-        print(f"[watch] Dashboard not found: {dashboard_path}")
-        return
-
-    print(f"[watch] Watching {dashboard_path} for changes (Ctrl+C to stop)...")
-    last_mtime = os.path.getmtime(dashboard_path)
-    try:
-        while True:
-            time.sleep(1)
-            try:
-                current_mtime = os.path.getmtime(dashboard_path)
-            except OSError:
-                continue
-            if current_mtime != last_mtime:
-                print("[watch] Change detected, waiting 2s...")
-                time.sleep(2)
-                cmd_refresh()
-                last_mtime = os.path.getmtime(dashboard_path)
-    except KeyboardInterrupt:
-        print("\n[watch] Stopped.")
-
-
 def main():
     if len(sys.argv) < 2:
         cmd_sync_info()
@@ -773,11 +572,7 @@ def main():
     try:
         if command == "init":
             force = "--force" in sys.argv[2:]
-            vault_path = None
-            for i, arg in enumerate(sys.argv[2:], 2):
-                if arg == "--vault-path" and i + 1 < len(sys.argv):
-                    vault_path = sys.argv[i + 1]
-            cmd_init(force=force, vault_path=vault_path)
+            cmd_init(force=force)
         elif command == "sync":
             cmd_sync_info()
         elif command == "status":
@@ -818,8 +613,6 @@ def main():
             cmd_tray(host=host, port=port)
         elif command == "install-tray":
             cmd_install_tray()
-        elif command == "watch":
-            cmd_watch()
         elif command == "find":
             import argparse
             parser = argparse.ArgumentParser(prog=f"{sys.argv[0]} find", description="Search tasks")

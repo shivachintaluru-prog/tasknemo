@@ -345,39 +345,6 @@ def _render_task_item(task, indent=0, all_tasks=None, section=None, analytics=No
     return _render_task_item_v2(task, indent, all_tasks, section, analytics)
 
 
-_CHECKED_TASK_RE = re.compile(r"- \[x\] (?:\*\*|~~)?(TASK-\d+)")
-
-
-def sync_dashboard_completions(vault_path, filename="TaskNemo.md"):
-    """Read the Obsidian dashboard and close tasks the user checked off."""
-    from .state_machine import transition_task
-    from .store import save_tasks as _save_tasks
-
-    path = os.path.join(vault_path, filename)
-    if not os.path.exists(path):
-        return []
-
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    checked_ids = _CHECKED_TASK_RE.findall(content)
-    if not checked_ids:
-        return []
-
-    store = load_tasks()
-    closed_ids = []
-    for task in store["tasks"]:
-        if task["id"] in checked_ids and task.get("state") != "closed":
-            transition_task(task, "closed", "Marked complete in Obsidian dashboard")
-            task["closed_by"] = "user"
-            closed_ids.append(task["id"])
-
-    if closed_ids:
-        _save_tasks(store)
-
-    return closed_ids
-
-
 # ---------------------------------------------------------------------------
 # Dashboard v1
 # ---------------------------------------------------------------------------
@@ -749,15 +716,6 @@ def render_dashboard(tasks, config, run_stats=None, analytics=None):
     return render_dashboard_v2(tasks, config, run_stats, analytics)
 
 
-def write_dashboard(markdown, vault_path, filename="TaskNemo.md"):
-    """Write the dashboard markdown to the Obsidian vault."""
-    os.makedirs(vault_path, exist_ok=True)
-    path = os.path.join(vault_path, filename)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(markdown)
-    return path
-
-
 # ---------------------------------------------------------------------------
 # Alerts
 # ---------------------------------------------------------------------------
@@ -836,15 +794,6 @@ def render_alerts(transitions, new_tasks, run_stats, analytics=None):
     return "\n".join(lines)
 
 
-def write_alerts(markdown, vault_path, filename="Task Alerts.md"):
-    """Write alerts markdown to the Obsidian vault."""
-    os.makedirs(vault_path, exist_ok=True)
-    path = os.path.join(vault_path, filename)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(markdown)
-    return path
-
-
 # ---------------------------------------------------------------------------
 # Sync Log
 # ---------------------------------------------------------------------------
@@ -880,10 +829,6 @@ def render_sync_log(run_log_entries, max_entries=20):
         lines.append(">")
         lines.append(f"> +{new} new \u00b7 {trans} transitions \u00b7 {merged} merged \u00b7 {skipped} skipped")
 
-        obs_closed = entry.get("obsidian_closed", [])
-        if obs_closed:
-            lines.append(f"> Closed from Obsidian: {', '.join(obs_closed)}")
-
         sources = entry.get("sources_queried", [])
         if sources:
             lines.append(f"> Sources: {', '.join(sources)}")
@@ -893,10 +838,3 @@ def render_sync_log(run_log_entries, max_entries=20):
     return "\n".join(lines)
 
 
-def write_sync_log(markdown, vault_path, filename="Sync Log.md"):
-    """Write sync log markdown to the Obsidian vault."""
-    os.makedirs(vault_path, exist_ok=True)
-    path = os.path.join(vault_path, filename)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(markdown)
-    return path

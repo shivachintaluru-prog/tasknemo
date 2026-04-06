@@ -21,7 +21,7 @@ def get_dashboard():
 
 @router.get("/export/markdown", response_class=PlainTextResponse)
 def export_markdown():
-    """Export the dashboard as Obsidian-flavored markdown."""
+    """Export the dashboard as markdown."""
     config = get_config()
     store = get_tasks()
     analytics = get_analytics()

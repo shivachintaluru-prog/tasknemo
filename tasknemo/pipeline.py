@@ -9,32 +9,15 @@ from .dedup import find_cross_source_match, merge_cross_source_signal
 from .state_machine import evaluate_transitions, match_conversation_to_tasks
 from .scoring import score_all_tasks, score_task
 from .analytics import record_response_time
-from .rendering import (
-    render_dashboard, write_dashboard, render_alerts, write_alerts,
-    render_sync_log, write_sync_log, sync_dashboard_completions,
-)
 from .notifications import _notify, _build_change_summary
 
 
 def sync_prepare():
     """Prepare sync context — the first step of the pipeline."""
     config = load_config()
-    ui_mode = config.get("ui_mode", "obsidian")
 
-    vault_path = config.get("vault_path", "")
-    dash_file = config.get("dashboard_filename", "TaskNemo.md")
     pre_closed = []
-    if vault_path and ui_mode != "web":
-        pre_closed = sync_dashboard_completions(vault_path, dash_file)
-        if pre_closed:
-            score_all_tasks(config)
-
-    # Import inbox tasks (skip when web-only)
-    from .cli import sync_inbox
     inbox_ids = []
-    if vault_path and ui_mode != "web":
-        inbox_ids += sync_inbox(vault_path, dash_file)
-        inbox_ids += sync_inbox(vault_path, "Task Inbox.md")
 
     since_date = calculate_since_date(
         config.get("last_run"), config.get("overlap_days", 2)
@@ -179,40 +162,10 @@ def run_transitions(conversation_signals, sync_context):
 
 
 def finalize_sync(run_stats, sync_context, transitions=None, new_tasks=None):
-    """Render dashboard, write it, optionally write alerts, and log the run."""
-    from .store import load_run_log as _load_run_log
-
+    """Log the run and send notification summary."""
     config = sync_context["config"]
-    vault_path = config.get("vault_path", "")
-    dash_file = config.get("dashboard_filename", "TaskNemo.md")
-    ui_mode = config.get("ui_mode", "obsidian")
-
-    path = None
-
-    if ui_mode != "web":
-        if vault_path:
-            late_closed = sync_dashboard_completions(vault_path, dash_file)
-            if late_closed:
-                score_all_tasks(config)
-
-        store = load_tasks()
-        md = render_dashboard(store["tasks"], config, run_stats=run_stats)
-        path = write_dashboard(md, vault_path, dash_file)
-
-        if transitions is not None:
-            analytics = load_analytics()
-            alerts_md = render_alerts(
-                transitions, new_tasks or [], run_stats, analytics,
-            )
-            alerts_file = config.get("alerts_filename", "Task Alerts.md")
-            write_alerts(alerts_md, vault_path, alerts_file)
 
     log_run(run_stats)
-
-    if vault_path and ui_mode != "web":
-        run_log = _load_run_log()
-        sync_md = render_sync_log(run_log["runs"])
-        write_sync_log(sync_md, vault_path)
 
     summary = _build_change_summary(
         run_stats.get("new_tasks", 0),
@@ -222,7 +175,7 @@ def finalize_sync(run_stats, sync_context, transitions=None, new_tasks=None):
     if summary:
         _notify("TaskNemo", summary)
 
-    return path
+    return None
 
 
 def log_run(stats):

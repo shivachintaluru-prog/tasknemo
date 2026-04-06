@@ -25,7 +25,7 @@ def read_config():
         "auto_close_open_days": config.get("auto_close_open_days", 10),
         "scoring": config.get("scoring", {}),
         "web_port": config.get("web_port", 8511),
-        "ui_mode": config.get("ui_mode", "obsidian"),
+        "ui_mode": config.get("ui_mode", "web"),
     }
 
 

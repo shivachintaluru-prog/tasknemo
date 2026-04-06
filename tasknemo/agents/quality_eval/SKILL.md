@@ -33,4 +33,4 @@ This skill performs a cross-check of TaskNemo's task store against WorkIQ data.
    Remember: **never trust WorkIQ's interpretive summaries** to create tasks.
 
 ## Output
-Results are appended to Quality Report.md in the Obsidian vault.
+Results are available via the web dashboard API.

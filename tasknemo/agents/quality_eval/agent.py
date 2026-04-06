@@ -210,13 +210,8 @@ class QualityEvalAgent(AgentBase):
             # Generate Quality Report.md
             report = self._render_report(stats, issues, config)
 
-            vault_path = config.get("vault_path", "")
-            if vault_path:
-                report_path = os.path.join(vault_path, "Quality Report.md")
-                os.makedirs(vault_path, exist_ok=True)
-                with open(report_path, "w", encoding="utf-8") as f:
-                    f.write(report)
-                stats["report_path"] = report_path
+            # Report is available via web API; no file write needed
+            stats["report"] = report
 
         except Exception as e:
             errors.append(str(e))

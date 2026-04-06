@@ -30,7 +30,15 @@ Claude Code orchestrates the sync pipeline: queries Teams chats, emails, and cal
 4. **Transitions** -- Auto-close stale items, detect completions, update states
 5. **Finalize** -- Log the run, send desktop notification
 
-Run a sync by telling Claude Code: `run full sync and restart the server`
+## Skills (Claude Code Slash Commands)
+
+| Skill | Description |
+|---|---|
+| `/sync` | Full sync -- fetches Teams, Email, Calendar via MCP, extracts tasks, runs pipeline |
+| `/sync --full` | Full sync with wider lookback window (7 days) |
+| `/review` | Quality review -- heuristic checks on task store |
+| `/review --mode-b` | Quality review + MCP cross-check for missed/phantom/stale tasks |
+| `/loop 30m /sync` | Run full sync every 30 minutes in the background |
 
 ## Web Dashboard
 

@@ -638,7 +638,7 @@ def main():
         elif command == "agent":
             _handle_agent_command()
         else:
-            print(f"Usage: python {sys.argv[0]} [init|sync|status|list|close|pin|unpin TASK-ID|check|migrate|upgrade|refresh|watch|serve|tray|install-tray|add|find|agent]")
+            print(f"Usage: python {sys.argv[0]} [init|sync|status|list|close|pin|unpin TASK-ID|check|migrate|upgrade|refresh|serve|tray|install-tray|add|find|agent]")
     except FileNotFoundError as e:
         if "data" in str(e).replace("\\", "/"):
             print(f"Data file not found: {e}")

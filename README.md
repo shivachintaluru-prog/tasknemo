@@ -13,22 +13,42 @@ python -m tasknemo.cli serve
 
 Open [http://localhost:8511](http://localhost:8511) in your browser.
 
+Then in Claude Code, run `/sync` to start your first full sync.
+
 ## Prerequisites
 
 - Python 3.10+
-- Claude Code (for automated sync via Teams, Mail, and Calendar MCP tools)
+- Claude Code with MCP servers configured for Teams, Mail, and Calendar
 
 ## How It Works
 
-Claude Code orchestrates the sync pipeline: queries Teams chats, emails, and calendar transcripts via MCP tools, extracts action items, and feeds them through deterministic Python functions for dedup, scoring, state transitions, and task lifecycle management. Everything is served through a web dashboard.
+TaskNemo uses Claude Code as the orchestration layer. The `/sync` skill calls Teams, Mail, and Calendar MCP tools to discover messages and meetings, uses Claude's NLU to extract action items, then feeds them through deterministic Python functions for dedup, scoring, state transitions, and task lifecycle management.
 
 ### Sync Pipeline
 
-1. **Discovery** -- Query Teams chats, emails, calendar events, and sent items
-2. **Extraction** -- Extract action items, commitments, and completion evidence
+1. **Discovery** -- Query Teams chats, emails, calendar events, and sent items via MCP
+2. **Extraction** -- Extract action items (inbound) and commitments waiting on others (outbound)
 3. **Processing** -- Dedup against existing tasks, merge cross-source signals
 4. **Transitions** -- Auto-close stale items, detect completions, update states
 5. **Finalize** -- Log the run, send desktop notification
+
+### Architecture
+
+```
+Claude Code (/sync skill)
+    |
+    +-- MCP Tools (Teams, Mail, Calendar)
+    |       |
+    |       +-- Discovery + Extraction (Claude NLU)
+    |
+    +-- Python Pipeline (deterministic)
+    |       |
+    |       +-- sync_prepare() -> process_source_items() -> run_transitions() -> finalize_sync()
+    |
+    +-- Data Store (data/*.json)
+    |
+    +-- Web Dashboard (FastAPI @ localhost:8511)
+```
 
 ## Skills (Claude Code Slash Commands)
 
@@ -39,6 +59,8 @@ Claude Code orchestrates the sync pipeline: queries Teams chats, emails, and cal
 | `/review` | Quality review -- heuristic checks on task store |
 | `/review --mode-b` | Quality review + MCP cross-check for missed/phantom/stale tasks |
 | `/loop 30m /sync` | Run full sync every 30 minutes in the background |
+
+Skills are defined in `.claude/skills/` and committed to the repo.
 
 ## Web Dashboard
 
@@ -68,11 +90,10 @@ The dashboard is available at `http://localhost:8511` with API endpoints:
 | `init` | First-time setup (creates data files, prompts for sync frequency) |
 | `serve` | Start the web dashboard (default: `localhost:8511`) |
 | `tray` | Start with system tray icon |
-| `sync` | Print sync pipeline queries and instructions |
 | `status` | Task counts by state |
 | `list` | Active tasks sorted by priority score |
-| `check` | Quick status check (no external queries) |
-| `refresh` | Run state transitions and re-score (no external queries) |
+| `check` | Quick status check with focus recommendations |
+| `refresh` | Run state transitions and re-score |
 | `close TASK-ID` | Manually close a task |
 | `pin TASK-ID` | Pin a task (+20 score boost) |
 | `unpin TASK-ID` | Unpin a task |
